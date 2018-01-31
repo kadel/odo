@@ -64,8 +64,8 @@ cat > "./.bintray.json" <<EOF
 
     "files":
         [
-            {"includePattern": "bin/(.*)",
-             "uploadPattern": "./latest/\$1", 
+            {"includePattern": "bin\/([^\/]+)\/(.*)",
+             "uploadPattern": "./\$1/\$2", 
              "matrixParams": {"override": 1 }
             }
         ],
