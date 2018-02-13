@@ -1,5 +1,5 @@
 builds:
-  - binary: drum-roll
+  - binary: ocdev
     goos:
       - windows
       - darwin
