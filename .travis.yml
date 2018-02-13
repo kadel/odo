@@ -5,7 +5,9 @@ language: go
 
 jobs:
   include:
-    - stage: test
+    # YAML alias, for settings shared across the simpler builds
+    - &base-test
+      stage: test
       go_import_path: github.com/redhat-developer/ocdev
       go: 1.9
       install:
@@ -13,10 +15,18 @@ jobs:
       script:
         - make
         - make validate
+
+    - <<: *base-test
+      script:
+        - make
+        - make validate
         - make test-coverage
       after_success:
         # submit coverage.txt to codecov.io 
         - bash <(curl -s https://codecov.io/bash)
+        
+    - <<: *base-test
+      go: 1.8
 
     - stage: deploy
       go_import_path: github.com/golang/dep
@@ -24,6 +34,7 @@ jobs:
       install: skip
       script: skip
       before_deploy:
+        - make goget-tools
         - make release
         - ./scripts/generate-bintray-json.sh
       deploy:
