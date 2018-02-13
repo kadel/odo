@@ -50,3 +50,8 @@ cross:
 .PHONY: generate-cli-docs
 generate-cli-docs:
 	go run scripts/generate-cli-documentation.go
+
+
+.PHONY: release
+release: cross
+	./scripts/prepare-release.sh
