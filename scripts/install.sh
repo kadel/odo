@@ -2,9 +2,14 @@
 set -e
 
 # The version of ocdev to install. Possible values - "master" and "latest"
+# master - builds from git master branch
+# latest - released versions specified by LATEST_VERSION variable
 OCDEV_VERSION="latest"
 
-GITHUB_RELEASES_URL="https://github.com/redhat-developer/ocdev/releases/download/v0.0.1"
+# Latest released ocdev version
+LATEST_VERSION="v0.0.1"
+
+GITHUB_RELEASES_URL="https://github.com/redhat-developer/ocdev/releases/download/${LATEST_VERSION}"
 BINTRAY_URL="https://dl.bintray.com/ocdev/ocdev/latest"
 
 INSTALLATION_PATH="/usr/local/bin/"
@@ -38,7 +43,7 @@ check_platform() {
         arch="amd64"
     fi
 
-    platform_type="${kernel,,}-$arch"
+    platform_type=$(echo "${kernel}-${arch}" | tr '[:upper:]' '[:lower:]')
 
     if ! echo "# $SUPPORTED_PLATFORMS" | grep "$platform_type" > /dev/null; then
         echo_stderr "
@@ -132,7 +137,7 @@ Aborting now!
     ubuntu|debian)
         echo "# Installing pre-requisites..."
         $PRIVILEGED_EXECUTION "apt-get update"
-        $PRIVILEGED_EXECUTION "apt-get install -y gnupg apt-transport-https"
+        $PRIVILEGED_EXECUTION "apt-get install -y gnupg apt-transport-https curl"
 
         echo "# "Adding GPG public key...
         $PRIVILEGED_EXECUTION "curl -L \"$DEBIAN_GPG_PUBLIC_KEY\" |  apt-key add -"
