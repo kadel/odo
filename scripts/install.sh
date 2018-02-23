@@ -90,7 +90,113 @@ invalid_ocdev_version_error() {
     exit 1
 }
 
-install_ocdev() {
+# install ocdev binary to /usr/local/bin/
+install_ocdev_bin() {
+    case "$OCDEV_VERSION" in
+    master)
+        BINARY_URL="$BINTRAY_URL/$platform/ocdev"
+        echo "# Downloading ocdev from $BINARY_URL"
+        curl -Lo ocdev "$BINARY_URL"
+        ;;
+    latest)
+        BINARY_URL="$GITHUB_RELEASES_URL/ocdev-$platform.gz"
+        echo "# Downloading ocdev from $BINARY_URL"
+        curl -Lo ocdev.gz "$BINARY_URL"
+        echo "# Extracting ocdev.gz"
+        gunzip -d ocdev.gz
+        ;;
+    *)
+        invalid_ocdev_version_error
+    esac
+
+    echo "# Setting execute permissions on ocdev"
+    chmod +x ocdev
+    echo "# Moving ocdev binary to $INSTALLATION_PATH"
+    $PRIVILEGED_EXECUTION "mv ocdev $INSTALLATION_PATH"
+    echo "# ocdev has been successfully installed on your machine"
+}
+
+# install ocdev on macOS via homebrew
+install_ocdev_homebrew() {
+    if ! command_exists brew; then
+        echo_stderr "# brew command not found. Please install Homebrew and run this installer again. See https://brew.sh/ on how to install Homebrew."
+    fi
+
+    echo "# Enabling kadel/ocdev tap... "
+    brew tap kadel/ocdev
+
+    echo "Installing ocdev..."
+    case "$OCDEV_VERSION" in
+    master)
+        brew install kadel/ocdev/ocdev -- HEAD
+        ;;
+    latest)
+        brew install kadel/ocdev/ocdev
+    esac
+
+    return 0
+}
+
+# install ocdev using deb package
+install_ocdev_deb(){
+    echo "# Installing pre-requisites..."
+    $PRIVILEGED_EXECUTION "apt-get update"
+    $PRIVILEGED_EXECUTION "apt-get install -y gnupg apt-transport-https curl"
+
+    echo "# "Adding GPG public key...
+    $PRIVILEGED_EXECUTION "curl -L \"$DEBIAN_GPG_PUBLIC_KEY\" |  apt-key add -"
+
+    echo "# Adding repository to /etc/apt/sources.list"
+    case "$OCDEV_VERSION" in
+    master)
+        $PRIVILEGED_EXECUTION "echo \"deb $DEBIAN_MASTER_REPOSITORY stretch main\" |  tee -a /etc/apt/sources.list"
+        ;;
+    latest)
+        $PRIVILEGED_EXECUTION "echo \"deb $DEBIAN_LATEST_REPOSITORY stretch main\" | tee -a /etc/apt/sources.list"
+        ;;
+    *)
+        invalid_ocdev_version_error
+    esac
+
+    $PRIVILEGED_EXECUTION "apt-get update"
+    $PRIVILEGED_EXECUTION "apt-get install -y ocdev"
+}
+
+# install ocdev using rpm pacakge
+install_ocdev_rpm() {
+    package_manager=""
+    case "$distribution" in
+    fedora)
+        package_manager="dnf"
+        ;;
+    centos)
+        package_manager="yum"
+        ;;
+    esac
+    
+    echo "# Installing pre-requisites..."
+    $PRIVILEGED_EXECUTION "$package_manager install -y curl"
+
+    echo "# Adding ocdev repo under /etc/yum.repos.d/"
+    case "$OCDEV_VERSION" in
+
+    master)
+        $PRIVILEGED_EXECUTION "curl -L $RPM_MASTER_YUM_REPO -o /etc/yum.repos.d/bintray-ocdev-ocdev-rpm-dev.repo"
+        ;;
+    latest)
+        $PRIVILEGED_EXECUTION "curl -L $RPM_LATEST_YUM_REPO -o /etc/yum.repos.d/bintray-ocdev-ocdev-rpm-releases.repo"
+        ;;
+    *)
+        invalid_ocdev_version_error
+    esac
+
+    $PRIVILEGED_EXECUTION "$package_manager install -y ocdev"
+}
+
+# install ocdev using package manager
+# automaticaly detects system and choses proper way to install ocdev (deb/rpm/homebrew)
+# if detected system is uknown uses install_ocdev_bin to copy binary to /usr/local/bin
+install_ocdev_pkg() {
     echo "# Starting ocdev installation..."
     echo "# Detecting distribution..."
 
@@ -107,23 +213,7 @@ Aborting now!
 
     # macOS specific steps
     if [ "$platform" = "darwin-amd64" ]; then
-        if ! command_exists brew; then
-            echo_stderr "# brew command does not exist. Please install and run the installer again."
-        fi
-
-        echo "# Enabling kadel/ocdev... "
-        brew tap kadel/ocdev
-
-        echo "Installing ocdev..."
-        case "$OCDEV_VERSION" in
-        master)
-            brew install kadel/ocdev/ocdev -- HEAD
-            ;;
-        latest)
-            brew install kadel/ocdev/ocdev
-        esac
-
-        return 0
+        install_ocdev_homebrew
     fi
 
     set_privileged_execution
@@ -134,83 +224,17 @@ Aborting now!
 
     case "$distribution" in
 
-    ubuntu|debian)
-        echo "# Installing pre-requisites..."
-        $PRIVILEGED_EXECUTION "apt-get update"
-        $PRIVILEGED_EXECUTION "apt-get install -y gnupg apt-transport-https curl"
-
-        echo "# "Adding GPG public key...
-        $PRIVILEGED_EXECUTION "curl -L \"$DEBIAN_GPG_PUBLIC_KEY\" |  apt-key add -"
-
-        echo "# Adding repository to /etc/apt/sources.list"
-        case "$OCDEV_VERSION" in
-        master)
-            $PRIVILEGED_EXECUTION "echo \"deb $DEBIAN_MASTER_REPOSITORY stretch main\" |  tee -a /etc/apt/sources.list"
-            ;;
-        latest)
-            $PRIVILEGED_EXECUTION "echo \"deb $DEBIAN_LATEST_REPOSITORY stretch main\" | tee -a /etc/apt/sources.list"
-            ;;
-        *)
-            invalid_ocdev_version_error
-        esac
-
-        $PRIVILEGED_EXECUTION "apt-get update"
-        $PRIVILEGED_EXECUTION "apt-get install -y ocdev"
+    ubuntu|debian|linuxmint)
+        install_ocdev_deb
         ;;
 
     centos|fedora)
-        package_manager=""
-        case "$distribution" in
-        fedora)
-            package_manager="dnf"
-            ;;
-        centos)
-            package_manager="yum"
-            ;;
-        esac
-
-        echo "# Adding ocdev repo under /etc/yum.repos.d/"
-        case "$OCDEV_VERSION" in
-
-        master)
-            $PRIVILEGED_EXECUTION "curl -L $RPM_MASTER_YUM_REPO -o /etc/yum.repos.d/bintray-ocdev-ocdev-rpm-dev.repo"
-            ;;
-        latest)
-            $PRIVILEGED_EXECUTION "curl -L $RPM_LATEST_YUM_REPO -o /etc/yum.repos.d/bintray-ocdev-ocdev-rpm-releases.repo"
-            ;;
-        *)
-            invalid_ocdev_version_error
-        esac
-
-        $PRIVILEGED_EXECUTION "$package_manager install -y ocdev"
+        install_ocdev_rpm
         ;;
 
     *)
         echo "# Could not identify distribution, proceeding with a binary install..."
-
-        BINARY_URL=""
-        case "$OCDEV_VERSION" in
-        master)
-            BINARY_URL="$BINTRAY_URL/$platform/ocdev"
-            echo "# Downloading ocdev from $BINARY_URL"
-            curl -Lo ocdev "$BINARY_URL"
-            ;;
-        latest)
-            BINARY_URL="$GITHUB_RELEASES_URL/ocdev-$platform.gz"
-            echo "# Downloading ocdev from $BINARY_URL"
-            curl -Lo ocdev.gz "$BINARY_URL"
-            echo "# Extracting ocdev.gz"
-            gunzip -d ocdev.gz
-            ;;
-        *)
-            invalid_ocdev_version_error
-        esac
-
-        echo "# Setting execute permissions on ocdev"
-        chmod +x ocdev
-        echo "# Moving ocdev binary to $INSTALLATION_PATH"
-        $PRIVILEGED_EXECUTION "mv ocdev $INSTALLATION_PATH"
-        echo "# ocdev has been successfully installed on your machine"
+        install_ocdev_bin
         ;;
     esac
 }
@@ -228,5 +252,5 @@ verify_ocdev() {
     fi
 }
 
-install_ocdev
+install_ocdev_pkg
 verify_ocdev
