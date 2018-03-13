@@ -60,9 +60,10 @@ func Create(name string) error {
 // mentioned in config but don't have any object associated with it on cluster).
 func List() ([]config.ApplicationInfo, error) {
 	applications := []config.ApplicationInfo{}
+	oc := occlient.Oc{}
 
 	// TODO: use project abstaction
-	project, err := occlient.GetCurrentProjectName()
+	project, err := oc.GetCurrentProjectName()
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to list applications")
 	}
@@ -76,7 +77,7 @@ func List() ([]config.ApplicationInfo, error) {
 	applications = append(applications, cfg.ActiveApplications...)
 
 	// Get applications from cluster
-	appNames, err := occlient.GetLabelValues(project, ApplicationLabel, ApplicationLabel)
+	appNames, err := oc.GetLabelValues(project, ApplicationLabel, ApplicationLabel)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to list applications")
 	}
@@ -106,13 +107,15 @@ func List() ([]config.ApplicationInfo, error) {
 func Delete(name string) error {
 	log.Debug("Deleting application %s", name)
 
+	oc := occlient.Oc{}
+
 	labels, err := GetLabels(name, false)
 	if err != nil {
 		return errors.Wrapf(err, "unable to delete application %s", name)
 	}
 
 	// delete application from cluster
-	output, err := occlient.Delete("all", "", labels)
+	output, err := oc.Delete("all", "", labels)
 	if err != nil {
 		return errors.Wrapf(err, "unable to delete application %s", name)
 	}
@@ -123,7 +126,7 @@ func Delete(name string) error {
 	if err != nil {
 		return errors.Wrapf(err, "unable to delete application %s", name)
 	}
-	project, err := occlient.GetCurrentProjectName()
+	project, err := oc.GetCurrentProjectName()
 	if err != nil {
 		return errors.Wrapf(err, "unable to delete application %s", name)
 	}
@@ -139,8 +142,10 @@ func Delete(name string) error {
 // GetCurrent returns currently active application.
 // If no application is active this functions returns empty string
 func GetCurrent() (string, error) {
+	oc := occlient.Oc{}
+
 	// TODO: use project abstaction
-	project, err := occlient.GetCurrentProjectName()
+	project, err := oc.GetCurrentProjectName()
 	if err != nil {
 		return "", errors.Wrap(err, "unable to get active application")
 	}
@@ -170,12 +175,14 @@ func GetCurrentOrDefault() (string, error) {
 
 // SetCurrent set application as active
 func SetCurrent(name string) error {
+	log.Debugf("Setting application %s as current.\n", name)
+
+	oc := occlient.Oc{}
+
 	// TODO: right now this assumes that there is a current project in openshift
 	// when we have project support in ocdev, this should call project.GetCurrent()
 	// TODO: use project abstraction
-	log.Debugf("Setting application %s as current.\n", name)
-
-	project, err := occlient.GetCurrentProjectName()
+	project, err := oc.GetCurrentProjectName()
 	if err != nil {
 		return errors.Wrap(err, "unable to get active application")
 	}

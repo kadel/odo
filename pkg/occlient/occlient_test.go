@@ -84,7 +84,8 @@ func TestGetOcBinary(t *testing.T) {
 					t.Error(err)
 				}
 			}
-			got, err := getOcBinary()
+			oc := Oc{}
+			got, err := oc.getOcBinary()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getOcBinary() unexpected error \n%v, wantErr %v", err, tt.wantErr)
 				return
@@ -149,7 +150,8 @@ func TestAddLabelsToArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			argsGot := addLabelsToArgs(tt.labels, tt.argsIn)
+			oc := Oc{}
+			argsGot := oc.addLabelsToArgs(tt.labels, tt.argsIn)
 
 			if !reflect.DeepEqual(argsGot, tt.argsOut1) && !reflect.DeepEqual(argsGot, tt.argsOut2) {
 				t.Errorf("addLabelsToArgs() \ngot:  %#v \nwant: %#v or %#v", argsGot, tt.argsOut1, tt.argsOut2)

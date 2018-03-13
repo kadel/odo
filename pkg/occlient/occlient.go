@@ -17,24 +17,66 @@ import (
 
 const ocRequestTimeout = 1 * time.Second
 
-// ocpath stores the path to oc binary
+// ocpath is a path to oc binary
+// it is populated by getOcBinary
 var ocpath string
 
-func initialize() error {
+// OpenShiftClient is an interface representing OpenShift client
+// Currently this is used to for mocking in tests. In future this we might use this for other
+// client implementations that are not using oc binary.
+type OpenShiftClient interface {
+	GetCurrentProjectName() (string, error)
+
+	GetProjects() (string, error)
+
+	CreateNewProject(name string) error
+
+	// NewAppS2I create new application  using S2I with source in git repository
+	NewAppS2I(name string, builderImage string, gitURL string, labels map[string]string) (string, error)
+
+	// NewAppS2I create new application  using S2I from local directory
+	NewAppS2IEmpty(name string, builderImage string, labels map[string]string) (string, error)
+
+	StartBuild(name string, dir string) (string, error)
+
+	// Delete calls oc delete
+	// kind is always required (can be set to 'all')
+	// name can be omitted if labels are set, in that case set name to ''
+	// if you want to delete object just by its name set labels to nil
+	Delete(kind string, name string, labels map[string]string) (string, error)
+
+	DeleteProject(name string) error
+
+	SetVolumes(config *VolumeConfig, operations *VolumeOperations) (string, error)
+	// GetLabelValues get label values of given label from objects in project that are matching selector
+	// returns slice of uniq label values
+	GetLabelValues(project string, label string, selector string) ([]string, error)
+}
+
+type Oc struct {
+}
+
+type ocCommand struct {
+	args   []string
+	data   *string
+	format string
+}
+
+func (o *Oc) initialize() error {
 	// don't execute further if ocpath was already set
 	if ocpath != "" {
 		return nil
 	}
 
 	var err error
-	ocpath, err = getOcBinary()
+	ocpath, err = o.getOcBinary()
 	if err != nil {
 		return errors.Wrap(err, "unable to get oc binary")
 	}
-	if !isServerUp() {
+	if !o.isServerUp() {
 		return errors.New("server is down")
 	}
-	if !isLoggedIn() {
+	if !o.isLoggedIn() {
 		return errors.New("please log in to the cluster")
 	}
 	return nil
@@ -44,7 +86,7 @@ func initialize() error {
 // first it looks for env variable KUBECTL_PLUGINS_CALLER (run as oc plugin)
 // than looks for env variable OC_BIN (set manualy by user)
 // at last it tries to find oc in default PATH
-func getOcBinary() (string, error) {
+func (o *Oc) getOcBinary() (string, error) {
 	log.Debug("getOcBinary - searching for oc binary")
 
 	var ocPath string
@@ -79,17 +121,11 @@ func getOcBinary() (string, error) {
 	return ocPath, nil
 }
 
-type OcCommand struct {
-	args   []string
-	data   *string
-	format string
-}
-
-// runOcCommands executes oc
+// runOcCommand executes oc
 // args - command line arguments to be passed to oc ('-o json' is added by default if data is not nil)
 // data - is a pointer to a string, if set than data is given to command to stdin ('-f -' is added to args as default)
-func runOcComamnd(command *OcCommand) ([]byte, error) {
-	if err := initialize(); err != nil {
+func (o *Oc) runOcCommand(command *ocCommand) ([]byte, error) {
+	if err := o.initialize(); err != nil {
 		return nil, errors.Wrap(err, "unable to perform oc initializations")
 	}
 
@@ -133,7 +169,7 @@ func runOcComamnd(command *OcCommand) ([]byte, error) {
 	return output, nil
 }
 
-func isLoggedIn() bool {
+func (o *Oc) isLoggedIn() bool {
 	cmd := exec.Command(ocpath, "whoami")
 	output, err := cmd.CombinedOutput()
 	log.Debugf("isLoggedIn err:  %#v \n output: %#v", err, string(output))
@@ -145,7 +181,7 @@ func isLoggedIn() bool {
 	return true
 }
 
-func isServerUp() bool {
+func (o *Oc) isServerUp() bool {
 	cmd := exec.Command(ocpath, "whoami", "--show-server")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -170,18 +206,18 @@ func isServerUp() bool {
 	return true
 }
 
-func GetCurrentProjectName() (string, error) {
+func (o *Oc) GetCurrentProjectName() (string, error) {
 	// We need to run `oc project` because it returns an error when project does
 	// not exist, while `oc project -q` does not return an error, it simply
 	// returns the project name
-	_, err := runOcComamnd(&OcCommand{
+	_, err := o.runOcCommand(&ocCommand{
 		args: []string{"project"},
 	})
 	if err != nil {
 		return "", errors.Wrap(err, "unable to get current project info")
 	}
 
-	output, err := runOcComamnd(&OcCommand{
+	output, err := o.runOcCommand(&ocCommand{
 		args: []string{"project", "-q"},
 	})
 	if err != nil {
@@ -191,8 +227,8 @@ func GetCurrentProjectName() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-func GetProjects() (string, error) {
-	output, err := runOcComamnd(&OcCommand{
+func (o *Oc) GetProjects() (string, error) {
+	output, err := o.runOcCommand(&ocCommand{
 		args:   []string{"get", "project"},
 		format: "custom-columns=NAME:.metadata.name",
 	})
@@ -202,8 +238,8 @@ func GetProjects() (string, error) {
 	return strings.Join(strings.Split(string(output), "\n")[1:], "\n"), nil
 }
 
-func CreateNewProject(name string) error {
-	_, err := runOcComamnd(&OcCommand{
+func (o *Oc) CreateNewProject(name string) error {
+	_, err := o.runOcCommand(&ocCommand{
 		args: []string{"new-project", name},
 	})
 	if err != nil {
@@ -214,7 +250,7 @@ func CreateNewProject(name string) error {
 
 // addLabelsToArgs adds labels from map to args as a new argument in format that oc requires
 // --labels label1=value1,label2=value2
-func addLabelsToArgs(labels map[string]string, args []string) []string {
+func (o *Oc) addLabelsToArgs(labels map[string]string, args []string) []string {
 	if labels != nil {
 		var labelsString []string
 		for key, value := range labels {
@@ -228,16 +264,16 @@ func addLabelsToArgs(labels map[string]string, args []string) []string {
 }
 
 // NewAppS2I create new application  using S2I with source in git repository
-func NewAppS2I(name string, builderImage string, gitUrl string, labels map[string]string) (string, error) {
+func (o *Oc) NewAppS2I(name string, builderImage string, gitUrl string, labels map[string]string) (string, error) {
 	args := []string{
 		"new-app",
 		fmt.Sprintf("%s~%s", builderImage, gitUrl),
 		"--name", name,
 	}
 
-	args = addLabelsToArgs(labels, args)
+	args = o.addLabelsToArgs(labels, args)
 
-	output, err := runOcComamnd(&OcCommand{args: args})
+	output, err := o.runOcCommand(&ocCommand{args: args})
 	if err != nil {
 		return "", err
 	}
@@ -246,7 +282,7 @@ func NewAppS2I(name string, builderImage string, gitUrl string, labels map[strin
 }
 
 // NewAppS2I create new application  using S2I from local directory
-func NewAppS2IEmpty(name string, builderImage string, labels map[string]string) (string, error) {
+func (o *Oc) NewAppS2IEmpty(name string, builderImage string, labels map[string]string) (string, error) {
 
 	// there is no way to create binary builds using 'oc new-app' other than passing it directory that is not a git repository
 	// this is why we are creating empty directory and using is a a source
@@ -263,9 +299,9 @@ func NewAppS2IEmpty(name string, builderImage string, labels map[string]string) 
 		"--name", name,
 	}
 
-	args = addLabelsToArgs(labels, args)
+	args = o.addLabelsToArgs(labels, args)
 
-	output, err := runOcComamnd(&OcCommand{args: args})
+	output, err := o.runOcCommand(&ocCommand{args: args})
 	if err != nil {
 		return "", err
 	}
@@ -273,7 +309,7 @@ func NewAppS2IEmpty(name string, builderImage string, labels map[string]string) 
 	return string(output[:]), nil
 }
 
-func StartBuild(name string, dir string) (string, error) {
+func (o *Oc) StartBuild(name string, dir string) (string, error) {
 	args := []string{
 		"start-build",
 		name,
@@ -284,7 +320,7 @@ func StartBuild(name string, dir string) (string, error) {
 	}
 
 	// TODO: build progress is not shown
-	output, err := runOcComamnd(&OcCommand{args: args})
+	output, err := o.runOcCommand(&ocCommand{args: args})
 	if err != nil {
 		return "", err
 	}
@@ -297,7 +333,7 @@ func StartBuild(name string, dir string) (string, error) {
 // kind is always required (can be set to 'all')
 // name can be omitted if labels are set, in that case set name to ''
 // if you want to delete object just by its name set labels to nil
-func Delete(kind string, name string, labels map[string]string) (string, error) {
+func (o *Oc) Delete(kind string, name string, labels map[string]string) (string, error) {
 
 	args := []string{
 		"delete",
@@ -317,17 +353,16 @@ func Delete(kind string, name string, labels map[string]string) (string, error) 
 		args = append(args, strings.Join(labelsString, ","))
 	}
 
-	output, err := runOcComamnd(&OcCommand{args: args})
+	output, err := o.runOcCommand(&ocCommand{args: args})
 	if err != nil {
 		return "", err
 	}
 
 	return string(output[:]), nil
-
 }
 
-func DeleteProject(name string) error {
-	_, err := runOcComamnd(&OcCommand{
+func (o *Oc) DeleteProject(name string) error {
+	_, err := o.runOcCommand(&ocCommand{
 		args: []string{"delete", "project", name},
 	})
 	if err != nil {
@@ -343,13 +378,13 @@ type VolumeConfig struct {
 	Path             *string
 }
 
-type VolumeOpertaions struct {
+type VolumeOperations struct {
 	Add    bool
 	Remove bool
 	List   bool
 }
 
-func SetVolumes(config *VolumeConfig, operations *VolumeOpertaions) (string, error) {
+func (o *Oc) SetVolumes(config *VolumeConfig, operations *VolumeOperations) (string, error) {
 	args := []string{
 		"set",
 		"volumes",
@@ -374,7 +409,7 @@ func SetVolumes(config *VolumeConfig, operations *VolumeOpertaions) (string, err
 	if operations.List {
 		args = append(args, "--all")
 	}
-	output, err := runOcComamnd(&OcCommand{
+	output, err := o.runOcCommand(&ocCommand{
 		args: args,
 	})
 	if err != nil {
@@ -385,7 +420,7 @@ func SetVolumes(config *VolumeConfig, operations *VolumeOpertaions) (string, err
 
 // GetLabelValues get label values of given label from objects in project that are matching selector
 // returns slice of uniq label values
-func GetLabelValues(project string, label string, selector string) ([]string, error) {
+func (o *Oc) GetLabelValues(project string, label string, selector string) ([]string, error) {
 	// get all object that have given label
 	// and show just label values separated by ,
 	args := []string{
@@ -395,7 +430,7 @@ func GetLabelValues(project string, label string, selector string) ([]string, er
 		"-o", "go-template={{range .items}}{{range $key, $value := .metadata.labels}}{{if eq $key \"" + label + "\"}}{{$value}},{{end}}{{end}}{{end}}",
 	}
 
-	output, err := runOcComamnd(&OcCommand{args: args})
+	output, err := o.runOcCommand(&ocCommand{args: args})
 	if err != nil {
 		return nil, err
 	}
