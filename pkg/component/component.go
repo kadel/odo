@@ -49,7 +49,7 @@ func CreateFromGit(name string, ctype string, url string) (string, error) {
 		return "", errors.Wrapf(err, "unable to create git component %s", name)
 	}
 	if !exists {
-		err = application.Create(currentApplication)
+		err = application.Create(currentApplication, &oc)
 		if err != nil {
 			return "", errors.Wrapf(err, "unable to create git component %s", name)
 		}
@@ -85,7 +85,7 @@ func CreateEmpty(name string, ctype string) (string, error) {
 		return "", errors.Wrapf(err, "unable to create git component %s", name)
 	}
 	if !exists {
-		err = application.Create(currentApplication)
+		err = application.Create(currentApplication, &oc)
 		if err != nil {
 			return "", errors.Wrapf(err, "unable to create git component %s", name)
 		}

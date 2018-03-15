@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/redhat-developer/ocdev/pkg/application"
+	"github.com/redhat-developer/ocdev/pkg/occlient"
 	"github.com/spf13/cobra"
 )
 
@@ -37,8 +38,10 @@ var applicationCreateCmd = &cobra.Command{
 		// Args validation makes sure that there is exactly one argument
 		name := args[0]
 
+		oc := occlient.Oc{}
+
 		fmt.Printf("Creating application: %v\n", name)
-		if err := application.Create(name); err != nil {
+		if err := application.Create(name, &oc); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}

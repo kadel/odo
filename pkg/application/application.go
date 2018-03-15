@@ -43,9 +43,10 @@ func GetLabels(application string, additional bool) (map[string]string, error) {
 }
 
 // Create a new application
-func Create(applicationName string) error {
+func Create(applicationName string, oc occlient.OpenShiftClient) error {
+
 	// TODO: use project abstraction
-	project, err := occlient.GetCurrentProjectName()
+	project, err := oc.GetCurrentProjectName()
 	if err != nil {
 		return errors.Wrap(err, "unable to create new application")
 	}
