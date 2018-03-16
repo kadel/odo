@@ -1,9 +1,9 @@
 package occlient
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/url"
 	"os"
@@ -13,12 +13,55 @@ import (
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+
+	appsclientset "github.com/openshift/client-go/apps/clientset/versioned/typed/apps/v1"
+	buildschema "github.com/openshift/client-go/build/clientset/versioned/scheme"
+	buildclientset "github.com/openshift/client-go/build/clientset/versioned/typed/build/v1"
+	imageclientset "github.com/openshift/client-go/image/clientset/versioned/typed/image/v1"
+
+	appsv1 "github.com/openshift/api/apps/v1"
+	buildv1 "github.com/openshift/api/build/v1"
+	imagev1 "github.com/openshift/api/image/v1"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/openshift/source-to-image/pkg/tar"
+	s2ifs "github.com/openshift/source-to-image/pkg/util/fs"
 )
 
 const ocRequestTimeout = 1 * time.Second
 
 // ocpath stores the path to oc binary
 var ocpath string
+
+type OpenShiftClient struct {
+}
+
+// parseImageName parse image reference
+// returns (imageName, tag, digest, error)
+// if image is referenced by tag (name:tag)  than digest is ""
+// if image is referenced by digest (name@digest) than  tag is ""
+func parseImageName(image string) (string, string, string, error) {
+	digestParts := strings.Split(image, "@")
+	if len(digestParts) == 2 {
+		// image is references digest
+		return digestParts[0], "", digestParts[1], nil
+	} else if len(digestParts) == 1 {
+		tagParts := strings.Split(image, ":")
+		if len(tagParts) == 2 {
+			// image references tag
+			return tagParts[0], tagParts[1], "", nil
+		} else if len(tagParts) == 1 {
+			return tagParts[0], "latest", "", nil
+		}
+	}
+	return "", "", "", fmt.Errorf("invalid image reference %s", image)
+
+}
 
 func initialize() error {
 	// don't execute further if ocpath was already set
@@ -229,67 +272,449 @@ func addLabelsToArgs(labels map[string]string, args []string) []string {
 
 // NewAppS2I create new application  using S2I with source in git repository
 func NewAppS2I(name string, builderImage string, gitUrl string, labels map[string]string) (string, error) {
-	args := []string{
-		"new-app",
-		fmt.Sprintf("%s~%s", builderImage, gitUrl),
-		"--name", name,
-	}
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 
-	args = addLabelsToArgs(labels, args)
-
-	output, err := runOcComamnd(&OcCommand{args: args})
+	config, err := kubeConfig.ClientConfig()
 	if err != nil {
-		return "", err
+		panic(err.Error())
 	}
-	return string(output[:]), nil
+	namespace, _, _ := kubeConfig.Namespace()
+
+	kubeClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	imageClient, err := imageclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	appsClient, err := appsclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	buildClient, err := buildclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	imageName, imageTag, _, err := parseImageName(builderImage)
+	if err != nil {
+		return "", errors.Wrap(err, "unable to create new s2i build")
+	}
+	log.Debugf("Checking for exact match with ImageStream")
+	var exactMatchName bool
+	imageStream, err := imageClient.ImageStreams("openshift").Get(imageName, metav1.GetOptions{})
+	if err != nil {
+		log.Debugf("No exact match found: %s", err.Error())
+		exactMatchName = false
+	} else {
+		exactMatchName = true
+	}
+	if exactMatchName {
+		for _, tag := range imageStream.Status.Tags {
+			if tag.Tag == imageTag {
+				log.Debugf("Found exact image tag match for %s", imageTag)
+				// first item is the latest one
+				tagDigest := tag.Items[0].Image
+				imageStreamImage, err := imageClient.ImageStreamImages("openshift").Get(fmt.Sprintf("%s@%s", imageName, tagDigest), metav1.GetOptions{})
+				if err != nil {
+					panic(err)
+				}
+				//TODO determine what port should be exposed
+				fmt.Printf("%#v\n", imageStreamImage.Image)
+			}
+		}
+	}
+
+	is := imagev1.ImageStream{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+	_, err = imageClient.ImageStreams(namespace).Create(&is)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	bc := buildv1.BuildConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: buildv1.BuildConfigSpec{
+			CommonSpec: buildv1.CommonSpec{
+				Output: buildv1.BuildOutput{
+					To: &corev1.ObjectReference{
+						Kind: "ImageStreamTag",
+						// TODO
+						Name: name + ":latest",
+					},
+				},
+				Source: buildv1.BuildSource{
+					Git: &buildv1.GitBuildSource{
+						URI: gitUrl,
+					},
+					Type: "Git",
+				},
+				Strategy: buildv1.BuildStrategy{
+					SourceStrategy: &buildv1.SourceBuildStrategy{
+						From: corev1.ObjectReference{
+							Kind: "ImageStreamTag",
+							// TODO
+							Name: "nodejs:latest",
+							// TODO
+							Namespace: "openshift",
+						},
+					},
+				},
+			},
+			Triggers: []buildv1.BuildTriggerPolicy{
+				buildv1.BuildTriggerPolicy{
+					Type: "ConfigChange",
+				},
+				buildv1.BuildTriggerPolicy{
+					Type:        "ImageChange",
+					ImageChange: &buildv1.ImageChangeTrigger{},
+				},
+			},
+		},
+	}
+	_, err = buildClient.BuildConfigs(namespace).Create(&bc)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	dc := appsv1.DeploymentConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				"deploymentconfig": name,
+			},
+		},
+		Spec: appsv1.DeploymentConfigSpec{
+			Replicas: 1,
+			Selector: map[string]string{
+				"deploymentconfig": name,
+			},
+			Template: &corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"deploymentconfig": name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						corev1.Container{
+							Image: name + ":latest",
+							Name:  name,
+						},
+					},
+				},
+			},
+			Triggers: []appsv1.DeploymentTriggerPolicy{
+				appsv1.DeploymentTriggerPolicy{
+					Type: "ConfigChange",
+				},
+				appsv1.DeploymentTriggerPolicy{
+					Type: "ImageChange",
+					ImageChangeParams: &appsv1.DeploymentTriggerImageChangeParams{
+						Automatic: true,
+						ContainerNames: []string{
+							name,
+						},
+						From: corev1.ObjectReference{
+							Kind: "ImageStreamTag",
+							Name: name + ":latest",
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = appsClient.DeploymentConfigs(namespace).Create(&dc)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	svc := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				corev1.ServicePort{
+					// TODO
+					Name:       "8080-tcp",
+					Port:       8080,
+					Protocol:   "TCP",
+					TargetPort: intstr.FromInt(8080),
+				},
+			},
+			Selector: map[string]string{
+				"deploymentconfig": name,
+			},
+		},
+	}
+
+	_, err = kubeClient.CoreV1().Services(namespace).Create(&svc)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return "", nil
 
 }
 
 // NewAppS2I create new application  using S2I from local directory
 func NewAppS2IEmpty(name string, builderImage string, labels map[string]string) (string, error) {
 
-	// there is no way to create binary builds using 'oc new-app' other than passing it directory that is not a git repository
-	// this is why we are creating empty directory and using is a a source
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 
-	tmpDir, err := ioutil.TempDir("", "fakeSource")
+	config, err := kubeConfig.ClientConfig()
 	if err != nil {
-		return "", errors.Wrap(err, "unable to create tmp directory to use it as a source for build")
+		panic(err.Error())
 	}
-	defer os.Remove(tmpDir)
+	namespace, _, _ := kubeConfig.Namespace()
 
-	args := []string{
-		"new-app",
-		fmt.Sprintf("%s~%s", builderImage, tmpDir),
-		"--name", name,
-	}
-
-	args = addLabelsToArgs(labels, args)
-
-	output, err := runOcComamnd(&OcCommand{args: args})
+	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return "", err
+		panic(err.Error())
 	}
 
-	return string(output[:]), nil
+	imageClient, err := imageclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	appsClient, err := appsclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	buildClient, err := buildclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	imageName, imageTag, _, err := parseImageName(builderImage)
+	if err != nil {
+		return "", errors.Wrap(err, "unable to create new s2i build")
+	}
+	log.Debugf("Checking for exact match with ImageStream")
+	var exactMatchName bool
+	imageStream, err := imageClient.ImageStreams("openshift").Get(imageName, metav1.GetOptions{})
+	if err != nil {
+		log.Debugf("No exact match found: %s", err.Error())
+		exactMatchName = false
+	} else {
+		exactMatchName = true
+	}
+	if exactMatchName {
+		for _, tag := range imageStream.Status.Tags {
+			if tag.Tag == imageTag {
+				log.Debugf("Found exact image tag match for %s", imageTag)
+				// first item is the latest one
+				tagDigest := tag.Items[0].Image
+				imageStreamImages, err := imageClient.ImageStreamImages("openshift").Get(fmt.Sprintf("%s@%s", imageName, tagDigest), metav1.GetOptions{})
+				if err != nil {
+					panic(err)
+				}
+				fmt.Printf("%#v\n", imageStreamImages)
+			}
+		}
+	}
+
+	is := imagev1.ImageStream{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+	_, err = imageClient.ImageStreams(namespace).Create(&is)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	bc := buildv1.BuildConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: buildv1.BuildConfigSpec{
+			CommonSpec: buildv1.CommonSpec{
+				Output: buildv1.BuildOutput{
+					To: &corev1.ObjectReference{
+						Kind: "ImageStreamTag",
+						// TODO
+						Name: name + ":latest",
+					},
+				},
+				Source: buildv1.BuildSource{
+					Type:   "Binary",
+					Binary: &buildv1.BinaryBuildSource{},
+				},
+				Strategy: buildv1.BuildStrategy{
+					SourceStrategy: &buildv1.SourceBuildStrategy{
+						From: corev1.ObjectReference{
+							Kind: "ImageStreamTag",
+							// TODO
+							Name: "nodejs:latest",
+							// TODO
+							Namespace: "openshift",
+						},
+					},
+				},
+			},
+			Triggers: []buildv1.BuildTriggerPolicy{
+				buildv1.BuildTriggerPolicy{
+					Type: "ConfigChange",
+				},
+				buildv1.BuildTriggerPolicy{
+					Type:        "ImageChange",
+					ImageChange: &buildv1.ImageChangeTrigger{},
+				},
+			},
+		},
+	}
+	_, err = buildClient.BuildConfigs(namespace).Create(&bc)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	dc := appsv1.DeploymentConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				"deploymentconfig": name,
+			},
+		},
+		Spec: appsv1.DeploymentConfigSpec{
+			Replicas: 1,
+			Selector: map[string]string{
+				"deploymentconfig": name,
+			},
+			Template: &corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"deploymentconfig": name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						corev1.Container{
+							Image: name + ":latest",
+							Name:  name,
+						},
+					},
+				},
+			},
+			Triggers: []appsv1.DeploymentTriggerPolicy{
+				appsv1.DeploymentTriggerPolicy{
+					Type: "ConfigChange",
+				},
+				appsv1.DeploymentTriggerPolicy{
+					Type: "ImageChange",
+					ImageChangeParams: &appsv1.DeploymentTriggerImageChangeParams{
+						Automatic: true,
+						ContainerNames: []string{
+							name,
+						},
+						From: corev1.ObjectReference{
+							Kind: "ImageStreamTag",
+							Name: name + ":latest",
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = appsClient.DeploymentConfigs(namespace).Create(&dc)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	svc := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				corev1.ServicePort{
+					// TODO
+					Name:       "8080-tcp",
+					Port:       8080,
+					Protocol:   "TCP",
+					TargetPort: intstr.FromInt(8080),
+				},
+			},
+			Selector: map[string]string{
+				"deploymentconfig": name,
+			},
+		},
+	}
+
+	_, err = kubeClient.CoreV1().Services(namespace).Create(&svc)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return "", nil
+
 }
 
 func StartBuild(name string, dir string) (string, error) {
-	args := []string{
-		"start-build",
-		name,
-		"--follow",
-	}
-	if len(dir) > 0 {
-		args = append(args, "--from-dir", dir)
-	}
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 
-	// TODO: build progress is not shown
-	output, err := runOcComamnd(&OcCommand{args: args})
+	config, err := kubeConfig.ClientConfig()
 	if err != nil {
-		return "", err
+		panic(err.Error())
+	}
+	namespace, _, _ := kubeConfig.Namespace()
+
+	buildClient, err := buildclientset.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
 	}
 
-	return string(output[:]), nil
+	var r io.Reader
+	pr, pw := io.Pipe()
+	go func() {
+		w := gzip.NewWriter(pw)
+		if err := tar.New(s2ifs.NewFileSystem()).CreateTarStream(dir, false, w); err != nil {
+			pw.CloseWithError(err)
+		} else {
+			w.Close()
+			pw.CloseWithError(io.EOF)
+		}
+	}()
+	r = pr
+
+	buildRequest := buildv1.BuildRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+
+	result := &buildv1.Build{}
+	// this should be  buildClient.BuildConfigs(namespace).Instantiate
+	// but there is no way to pass data using that call.
+	err = buildClient.RESTClient().Post().
+		Namespace(namespace).
+		Resource("buildconfigs").
+		Name(name).
+		SubResource("instantiatebinary").
+		Body(r).
+		VersionedParams(&buildRequest, buildschema.ParameterCodec).
+		Do().
+		Into(result)
+
+	return "", nil
 
 }
 
