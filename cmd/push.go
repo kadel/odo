@@ -54,7 +54,7 @@ var pushCmd = &cobra.Command{
 
 		switch sourceType {
 		case "local":
-			// use value of '--dir' as source if it was used
+			// use value of '--local' as source if it was used
 			if len(componentLocal) != 0 {
 				sourcePath = componentLocal
 			}

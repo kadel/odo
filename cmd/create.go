@@ -37,13 +37,27 @@ If component name is not provided, component type value will be used for name.
 		log.Debugf("Component create called with args: %#v, flags: binary=%s, git=%s, local=%s", strings.Join(args, " "), componentBinary, componentGit, componentLocal)
 
 		client := getOcClient()
+
+		typeFlagsCount := 0
+		// default source type is local
+		sourceType := "local"
 		if len(componentBinary) != 0 {
-			fmt.Printf("--binary is not implemented yet\n\n")
-			cmd.Help()
-			os.Exit(1)
+			typeFlagsCount++
+			sourceType = "binary"
+		}
+		if len(componentLocal) != 0 {
+			typeFlagsCount++
+			sourceType = "local"
+		}
+		if len(componentGit) != 0 {
+			typeFlagsCount++
+			sourceType = "git"
 		}
 
-		//TODO: check flags - only one of binary, git, dir can be specified
+		if typeFlagsCount > 1 {
+			fmt.Println("Only one of --git, --binary, --local may be specified.")
+			os.Exit(1)
+		}
 
 		//We don't have to check it anymore, Args check made sure that args has at least one item
 		// and no more than two
@@ -51,11 +65,6 @@ If component name is not provided, component type value will be used for name.
 		componentName := args[0]
 		if len(args) == 2 {
 			componentName = args[1]
-		}
-
-		if len(componentBinary) != 0 {
-			fmt.Printf("--binary is not implemented yet\n\n")
-			os.Exit(1)
 		}
 
 		exists, err := component.Exists(client, componentName)
@@ -67,22 +76,27 @@ If component name is not provided, component type value will be used for name.
 			os.Exit(1)
 		}
 
-		if len(componentGit) != 0 {
+		switch sourceType {
+		case "git":
 			err := component.CreateFromGit(client, componentName, componentType, componentGit)
 			checkError(err, "")
-		} else if len(componentLocal) != 0 {
+		case "local":
 			// we want to use and save absolute path for component
-			dir, err := filepath.Abs(componentLocal)
+			var dir string
+			if len(componentLocal) > 0 {
+				dir, err = filepath.Abs(componentLocal)
+				checkError(err, "")
+			} else {
+				dir, err = filepath.Abs("./")
+				checkError(err, "")
+			}
+			err = component.CreateFromPath(client, componentName, componentType, dir, false)
 			checkError(err, "")
-			err = component.CreateFromDir(client, componentName, componentType, dir)
-			checkError(err, "")
-		} else {
-			// we want to use and save absolute path for component
-			dir, err := filepath.Abs("./")
-			checkError(err, "")
-			err = component.CreateFromDir(client, componentName, componentType, dir)
+		case "binary":
+			err = component.CreateFromPath(client, componentName, componentType, componentBinary, true)
 			checkError(err, "")
 		}
+
 		// after component is successfully created, set is as active
 		err = component.SetCurrent(client, componentName)
 		checkError(err, "")

@@ -88,21 +88,21 @@ func CreateFromGit(client *occlient.Client, name string, ctype string, url strin
 	return nil
 }
 
-// CreateFromDir create new component with source from local directory
-func CreateFromDir(client *occlient.Client, name string, ctype string, dir string) error {
+// CreateFromPath create new component with source in  local directory or with single binary
+func CreateFromPath(client *occlient.Client, name string, ctype string, path string, asFile bool) error {
 	currentApplication, err := application.GetCurrentOrGetAndSetDefault(client)
 	if err != nil {
-		return errors.Wrapf(err, "unable to create component %s from local path", name, dir)
+		return errors.Wrapf(err, "unable to create component %s from local path", name, path)
 	}
 
 	exists, err := application.Exists(client, currentApplication)
 	if err != nil {
-		return errors.Wrapf(err, "unable to create component %s from local path", name, dir)
+		return errors.Wrapf(err, "unable to create component %s from local path", name, path)
 	}
 	if !exists {
 		err = application.Create(client, currentApplication)
 		if err != nil {
-			return errors.Wrapf(err, "unable to create component %s from local path", name, dir)
+			return errors.Wrapf(err, "unable to create component %s from local path", name, path)
 		}
 	}
 
@@ -111,7 +111,7 @@ func CreateFromDir(client *occlient.Client, name string, ctype string, dir strin
 	labels[componentTypeLabel] = ctype
 
 	// save source path as annotation
-	sourceURL := url.URL{Scheme: "file", Path: dir}
+	sourceURL := url.URL{Scheme: "file", Path: path}
 	annotations := map[string]string{componentSourceURLAnnotation: sourceURL.String()}
 
 	err = client.NewAppS2I(name, ctype, "", labels, annotations)
@@ -121,7 +121,7 @@ func CreateFromDir(client *occlient.Client, name string, ctype string, dir strin
 
 	fmt.Println("please wait, building component...")
 
-	err = client.StartBinaryBuild(name, dir)
+	err = client.StartBinaryBuild(name, path, asFile)
 	if err != nil {
 		return err
 	}
@@ -198,9 +198,11 @@ func GetCurrent(client *occlient.Client) (string, error) {
 
 }
 
-// PushLocal start new build and push local dir as a source for build
-func PushLocal(client *occlient.Client, componentName string, dir string) error {
-	err := client.StartBinaryBuild(componentName, dir)
+// PushPath start new build and push local path as a source for build
+// if asFile is true than path is assumed to be single binary file
+// if asFile is false than path is assumed to be directory
+func PushPath(client *occlient.Client, componentName string, path string) error {
+	err := client.StartBinaryBuild(componentName, path, false)
 	if err != nil {
 		return errors.Wrap(err, "unable to start build")
 	}
