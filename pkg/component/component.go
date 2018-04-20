@@ -2,6 +2,7 @@ package component
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
@@ -53,7 +54,7 @@ func CreateFromDir(client *occlient.Client, name string, ctype string, dir strin
 	sourceURL := url.URL{Scheme: "file", Path: dir}
 	annotations := map[string]string{componentSourceURLAnnotation: sourceURL.String()}
 
-	err := client.NewAppS2I(name, ctype, "", labels, annotations)
+	err := client.NewPseudoVPS(name, ctype, labels, annotations)
 	if err != nil {
 		return err
 	}
@@ -134,20 +135,57 @@ func GetCurrent(client *occlient.Client, applicationName string, projectName str
 
 }
 
-// PushLocal start new build and push local dir as a source for build
-func PushLocal(client *occlient.Client, componentName string, dir string) error {
-	err := client.StartBinaryBuild(componentName, dir)
+// PushLocal
+func PushLocal(client *occlient.Client, componentName string, applicationName string, dir string, out io.Writer) error {
+	// We need to make sure that thee is a '/' at the end, otherwise rsync will sync files to wrong directory
+	dir = fmt.Sprintf("%s/", dir)
+
+	// Find DeploymentConfig for component
+	componentLabels := componentlabels.GetLabels(componentName, applicationName, false)
+	componentSelector := util.ConvertLabelsToSelector(componentLabels)
+	dc, err := client.GetOneDeploymentConfigFromSelector(componentSelector)
 	if err != nil {
-		return errors.Wrap(err, "unable to start build")
+		return errors.Wrap(err, "unable to get deployment for component")
 	}
+	// Find Pod for component
+	podSelector := fmt.Sprintf("deploymentconfig=%s", dc.Name)
+	pod, err := client.GetOnePodFromSelector(podSelector)
+
+	syncOutput, err := client.SyncPath(dir, pod.Name, "/opt/app-root/src")
+	if err != nil {
+		return errors.Wrap(err, "unable push files to pod")
+	}
+	fmt.Fprintf(out, syncOutput)
+
+	assembleOut, err := client.ExecCMDInContainer(pod.Name, []string{"/usr/libexec/s2i/assemble"})
+	if err != nil {
+		return errors.Wrap(err, "unable to execute assemble script")
+	}
+	fmt.Fprintf(out, assembleOut)
+
 	return nil
 }
 
-// RebuildGit rebuild git component from the git repo that it was created with
-func RebuildGit(client *occlient.Client, componentName string) error {
-	if err := client.StartBuild(componentName); err != nil {
+// Build component from BuildConfig.
+// If 'streamLogs' is true than it streams build logs on stdout, set 'wait' to true if you want to return error if build fails.
+// If 'wait' is true than it waits for build to successfully complete.
+// If 'wait' is false than this function won't return error even if build failed.
+func Build(client *occlient.Client, componentName string, streamLogs bool, wait bool) error {
+	buildName, err := client.StartBuild(componentName)
+	if err != nil {
 		return errors.Wrapf(err, "unable to rebuild %s", componentName)
 	}
+	if streamLogs {
+		if err := client.FollowBuildLog(buildName); err != nil {
+			return errors.Wrapf(err, "unable to follow logs for %s", buildName)
+		}
+	}
+	if wait {
+		if err := client.WaitForBuildToFinish(buildName); err != nil {
+			return errors.Wrapf(err, "unable to wait for build %s", buildName)
+		}
+	}
+
 	return nil
 }
 
@@ -211,8 +249,12 @@ func GetComponentSource(client *occlient.Client, componentName string, applicati
 
 	switch bc.Spec.Source.Type {
 	case buildv1.BuildSourceGit:
-		sourceType = "git"
-		sourcePath = bc.Spec.Source.Git.URI
+		//sourceType = "git"
+		//sourcePath = bc.Spec.Source.Git.URI
+
+		// TODO: tkral HACK: GetComponentSource needs to be updated to use annotations to detect ComponentSourceType
+		sourceType = "local"
+		sourcePath = bc.ObjectMeta.Annotations[componentSourceURLAnnotation]
 	case buildv1.BuildSourceBinary:
 		sourceType = "local"
 		sourcePath = bc.ObjectMeta.Annotations[componentSourceURLAnnotation]

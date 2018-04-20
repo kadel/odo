@@ -106,13 +106,16 @@ A full list of component types that can be deployed is available using: 'odo com
 			checkError(err, "")
 			fmt.Printf("Component '%s' was created.\n", componentName)
 			fmt.Printf("Triggering build from %s.\n\n", componentGit)
-			err = component.RebuildGit(client, componentName)
+			err = component.Build(client, componentName, true, false)
 			checkError(err, "")
 		} else if len(componentLocal) != 0 {
 			// we want to use and save absolute path for component
 			dir, err := filepath.Abs(componentLocal)
 			checkError(err, "")
 			err = component.CreateFromDir(client, componentName, componentType, dir, applicationName)
+			checkError(err, "")
+			fmt.Printf("Please wait, creating %s component ...\n", componentName)
+			err = component.Build(client, componentName, false, true)
 			checkError(err, "")
 			fmt.Printf("Component '%s' was created.\n", componentName)
 			fmt.Printf("To push source code to the component run 'odo push'\n")
@@ -121,9 +124,12 @@ A full list of component types that can be deployed is available using: 'odo com
 			dir, err := filepath.Abs("./")
 			checkError(err, "")
 			err = component.CreateFromDir(client, componentName, componentType, dir, applicationName)
+			checkError(err, "")
+			fmt.Printf("Please wait, creating %s component ...\n", componentName)
+			err = component.Build(client, componentName, false, true)
+			checkError(err, "")
 			fmt.Printf("Component '%s' was created.\n", componentName)
 			fmt.Printf("To push source code to the component run 'odo push'\n")
-			checkError(err, "")
 		}
 		// after component is successfully created, set is as active
 		err = component.SetCurrent(client, componentName, applicationName, projectName)

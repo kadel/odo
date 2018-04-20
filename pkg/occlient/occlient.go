@@ -13,7 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redhat-developer/odo/pkg/util"
+
 	"github.com/fatih/color"
+	dockerapiv10 "github.com/openshift/api/image/docker10"
+	"github.com/openshift/source-to-image/pkg/tar"
+	s2ifs "github.com/openshift/source-to-image/pkg/util/fs"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
@@ -25,6 +30,7 @@ import (
 	projectclientset "github.com/openshift/client-go/project/clientset/versioned/typed/project/v1"
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
 
+	scv1beta1 "github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	appsv1 "github.com/openshift/api/apps/v1"
 	buildv1 "github.com/openshift/api/build/v1"
 	imagev1 "github.com/openshift/api/image/v1"
@@ -32,20 +38,15 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-
-	scv1beta1 "github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
-
-	"github.com/openshift/source-to-image/pkg/tar"
-	s2ifs "github.com/openshift/source-to-image/pkg/util/fs"
-
-	dockerapiv10 "github.com/openshift/api/image/docker10"
-	"github.com/redhat-developer/odo/pkg/util"
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/util/retry"
+
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/version"
 )
 
 const (
@@ -633,6 +634,224 @@ func (c *Client) NewAppS2I(name string, builderImage string, gitUrl string, labe
 
 }
 
+func (c *Client) NewPseudoVPS(name string, builderImage string, labels map[string]string, annotations map[string]string) error {
+	appRootVolumeName := fmt.Sprintf("%s-appdata", name)
+
+	imageName, imageTag, _, err := parseImageName(builderImage)
+	if err != nil {
+		return errors.Wrap(err, "unable to create new s2i git build ")
+	}
+
+	var containerPorts []corev1.ContainerPort
+
+	log.Debugf("Checking for exact match of builderImage with ImageStream")
+	imageStream, err := c.imageClient.ImageStreams(OpenShiftNameSpace).Get(imageName, metav1.GetOptions{})
+	if err != nil {
+		log.Debugf("No exact match found: %s", err.Error())
+		return errors.Wrapf(err, "unable to find matching builder image %s", imageName)
+	} else {
+		tagFound := false
+		for _, tag := range imageStream.Status.Tags {
+			// look for matching tag
+			if tag.Tag == imageTag {
+				tagFound = true
+				log.Debugf("Found exact image tag match for %s:%s", imageName, imageTag)
+				// ImageStream holds tag history
+				// first item is the latest one
+				tagDigest := tag.Items[0].Image
+				// look for imageStreamImage for given tag (reference by digest)
+				imageStreamImageName := fmt.Sprintf("%s@%s", imageName, tagDigest)
+				imageStreamImage, err := c.imageClient.ImageStreamImages("openshift").Get(imageStreamImageName, metav1.GetOptions{})
+				if err != nil {
+					return errors.Wrapf(err, "unable to find ImageStreamImage with  %s digest", imageStreamImageName)
+				}
+				// get ports that are exported by image
+				containerPorts, err = getExposedPorts(imageStreamImage)
+				if err != nil {
+					return errors.Wrapf(err, "unable to get exported ports from % image", builderImage)
+				}
+			}
+		}
+		if !tagFound {
+			return errors.Wrapf(err, "unable to find tag %s for image", imageTag, imageName)
+		}
+
+	}
+
+	// ObjectMetadata are the same for all generated objects
+	commonObjectMeta := metav1.ObjectMeta{
+		Name:        name,
+		Labels:      labels,
+		Annotations: annotations,
+	}
+
+	// generate and create ImageStream
+	is := imagev1.ImageStream{
+		ObjectMeta: commonObjectMeta,
+	}
+	_, err = c.imageClient.ImageStreams(c.namespace).Create(&is)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create ImageStream for %s", name)
+	}
+
+	// generate BuildConfig
+	buildSource := buildv1.BuildSource{
+		Type:   buildv1.BuildSourceBinary,
+		Binary: &buildv1.BinaryBuildSource{},
+	}
+
+	buildSource = buildv1.BuildSource{
+		Git: &buildv1.GitBuildSource{
+			URI: "https://github.com/kadel/pseudo-vps-quickstart",
+		},
+		Type: buildv1.BuildSourceGit,
+	}
+
+	bc := buildv1.BuildConfig{
+		ObjectMeta: commonObjectMeta,
+		Spec: buildv1.BuildConfigSpec{
+			CommonSpec: buildv1.CommonSpec{
+				Output: buildv1.BuildOutput{
+					To: &corev1.ObjectReference{
+						Kind: "ImageStreamTag",
+						Name: name + ":latest",
+					},
+				},
+				Source: buildSource,
+				Strategy: buildv1.BuildStrategy{
+					SourceStrategy: &buildv1.SourceBuildStrategy{
+						From: corev1.ObjectReference{
+							Kind:      "ImageStreamTag",
+							Name:      imageName + ":" + imageTag,
+							Namespace: OpenShiftNameSpace,
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = c.buildClient.BuildConfigs(c.namespace).Create(&bc)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create BuildConfig for %s", name)
+	}
+
+	// generate  and create DeploymentConfig
+	dc := appsv1.DeploymentConfig{
+		ObjectMeta: commonObjectMeta,
+		Spec: appsv1.DeploymentConfigSpec{
+			Replicas: 1,
+			Selector: map[string]string{
+				"deploymentconfig": name,
+			},
+			Template: &corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"deploymentconfig": name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Image: bc.Spec.Output.To.Name,
+							Name:  name,
+							Ports: containerPorts,
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      appRootVolumeName,
+									MountPath: "/opt/app-root",
+									SubPath:   "app-root",
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: appRootVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: appRootVolumeName,
+								},
+							},
+						},
+					},
+					InitContainers: []corev1.Container{
+						{
+							Name:  "copy-files-to-volume",
+							Image: bc.Spec.Output.To.Name,
+							Command: []string{
+								"copy-files-to-volume",
+								"/opt/app-root",
+								"/mnt/app-root"},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      appRootVolumeName,
+									MountPath: "/mnt",
+								},
+							},
+						},
+					},
+				},
+			},
+			Triggers: []appsv1.DeploymentTriggerPolicy{
+				{
+					Type: "ConfigChange",
+				},
+				{
+					Type: "ImageChange",
+					ImageChangeParams: &appsv1.DeploymentTriggerImageChangeParams{
+						Automatic: true,
+						ContainerNames: []string{
+							name,
+							"copy-files-to-volume",
+						},
+						From: corev1.ObjectReference{
+							Kind: "ImageStreamTag",
+							Name: bc.Spec.Output.To.Name,
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = c.appsClient.DeploymentConfigs(c.namespace).Create(&dc)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create DeploymentConfig for %s", name)
+	}
+
+	// generate and create Service
+	var svcPorts []corev1.ServicePort
+	for _, containerPort := range dc.Spec.Template.Spec.Containers[0].Ports {
+		svcPort := corev1.ServicePort{
+
+			Name:       containerPort.Name,
+			Port:       containerPort.ContainerPort,
+			Protocol:   containerPort.Protocol,
+			TargetPort: intstr.FromInt(int(containerPort.ContainerPort)),
+		}
+		svcPorts = append(svcPorts, svcPort)
+	}
+	svc := corev1.Service{
+		ObjectMeta: commonObjectMeta,
+		Spec: corev1.ServiceSpec{
+			Ports: svcPorts,
+			Selector: map[string]string{
+				"deploymentconfig": name,
+			},
+		},
+	}
+	_, err = c.kubeClient.CoreV1().Services(c.namespace).Create(&svc)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create Service for %s", name)
+	}
+
+	_, err = c.CreatePVC(appRootVolumeName, "1Gi", nil)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create PVC for %s", name)
+	}
+
+	return nil
+}
+
 // UpdateBuildConfig updates the BuildConfig file
 // buildConfigName is the name of the BuildConfig file to be updated
 // projectName is the name of the project
@@ -724,8 +943,8 @@ func (c *Client) StartBinaryBuild(name string, dir string) error {
 	return nil
 }
 
-// StartBuild starts new build as it is
-func (c *Client) StartBuild(name string) error {
+// StartBuild starts new build as it is, returns name of the build stat was started
+func (c *Client) StartBuild(name string) (string, error) {
 	buildRequest := buildv1.BuildRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
@@ -733,21 +952,46 @@ func (c *Client) StartBuild(name string) error {
 	}
 	result, err := c.buildClient.BuildConfigs(c.namespace).Instantiate(name, &buildRequest)
 	if err != nil {
-		return errors.Wrapf(err, "unable to start build %s", name)
+		return "", errors.Wrapf(err, "unable to start build %s", name)
 	}
-	log.Debugf("Build %s triggered.", name)
+	log.Debugf("Build %s for BuildConfig %s triggered.", name, result.Name)
 
-	err = c.FollowBuildLog(result.Name)
+	return result.Name, nil
+}
+
+// WaitForBuildToFinish block and waits for build to finish. Returns error if build failed or was canceled.
+func (c *Client) WaitForBuildToFinish(buildName string) error {
+	log.Debugf("Waiting for %s  build to finish", buildName)
+
+	w, err := c.buildClient.Builds(c.namespace).Watch(metav1.ListOptions{
+		FieldSelector: fields.Set{"metadata.name": buildName}.AsSelector().String(),
+	})
 	if err != nil {
-		return errors.Wrapf(err, "unable to start build %s", name)
+		return errors.Wrapf(err, "unable to watch build")
 	}
-
+	defer w.Stop()
+	for {
+		val, ok := <-w.ResultChan()
+		if !ok {
+			break
+		}
+		if e, ok := val.Object.(*buildv1.Build); ok {
+			log.Debugf("Status of %s build is %s", e.Name, e.Status.Phase)
+			switch e.Status.Phase {
+			case buildv1.BuildPhaseComplete:
+				log.Debugf("Build %s completed.", e.Name)
+				return nil
+			case buildv1.BuildPhaseFailed, buildv1.BuildPhaseCancelled, buildv1.BuildPhaseError:
+				return errors.Errorf("build %s status %s", e.Name, e.Status.Phase)
+			}
+		}
+	}
 	return nil
 }
 
 // FollowBuildLog stream build log to stdout
 func (c *Client) FollowBuildLog(buildName string) error {
-	buildLogOpetions := buildv1.BuildLogOptions{
+	buildLogOptions := buildv1.BuildLogOptions{
 		Follow: true,
 		NoWait: false,
 	}
@@ -757,7 +1001,7 @@ func (c *Client) FollowBuildLog(buildName string) error {
 		Resource("builds").
 		Name(buildName).
 		SubResource("log").
-		VersionedParams(&buildLogOpetions, buildschema.ParameterCodec).
+		VersionedParams(&buildLogOptions, buildschema.ParameterCodec).
 		Stream()
 
 	if err != nil {
@@ -1333,4 +1577,23 @@ func (c *Client) GetServerVersion() (*serverInfo, error) {
 	info.KubernetesVersion = kubernetesVersion.GitVersion
 
 	return &info, nil
+}
+
+func (c *Client) ExecCMDInContainer(podName string, cmd []string) (string, error) {
+
+	// TODO: do this without using 'oc' binary
+	args := []string{
+		"exec",
+		podName,
+		"--",
+		strings.Join(cmd, " "),
+	}
+
+	output, err := c.runOcComamnd(&OcCommand{args: args})
+	if err != nil {
+		return "", err
+	}
+
+	log.Debugf("command output:\n %s \n", string(output[:]))
+	return string(output[:]), nil
 }

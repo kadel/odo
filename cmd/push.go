@@ -46,12 +46,17 @@ var pushCmd = &cobra.Command{
 			}
 		} else {
 			componentName = args[0]
+			exists, err := component.Exists(client, componentName, applicationName, projectName)
+			checkError(err, "")
+			if !exists {
+				fmt.Printf("Component with name %s does not exist in the current application\n", componentName)
+				os.Exit(1)
+			}
 		}
 		fmt.Printf("Pushing changes to component: %v\n", componentName)
 
 		sourceType, sourcePath, err := component.GetComponentSource(client, componentName, applicationName, projectName)
-		checkError(err, "unable to get current component")
-
+		checkError(err, "unable to get component source")
 		switch sourceType {
 		case "local":
 			// use value of '--dir' as source if it was used
@@ -66,7 +71,7 @@ var pushCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			err = component.PushLocal(client, componentName, u.Path)
+			err = component.PushLocal(client, componentName, applicationName, u.Path, os.Stdout)
 			checkError(err, fmt.Sprintf("failed to push component: %v", componentName))
 		case "git":
 			// currently we don't support changing build type
@@ -75,7 +80,7 @@ var pushCmd = &cobra.Command{
 				fmt.Println("unable to push local directory to component that uses git repository as source")
 				os.Exit(1)
 			}
-			err := component.RebuildGit(client, componentName)
+			err := component.Build(client, componentName, true, false)
 			checkError(err, fmt.Sprintf("failed to push component: %v", componentName))
 		}
 
