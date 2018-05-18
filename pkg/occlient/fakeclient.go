@@ -1,32 +1,24 @@
 package occlient
 
 import (
-	fkappsclientset "github.com/openshift/client-go/apps/clientset/versioned/fake"
-	fkbuildclientset "github.com/openshift/client-go/build/clientset/versioned/fake"
-	fkimageclientset "github.com/openshift/client-go/image/clientset/versioned/fake"
-	fkprojectclientset "github.com/openshift/client-go/project/clientset/versioned/fake"
 	fkrouteClientset "github.com/openshift/client-go/route/clientset/versioned/fake"
-	fkkubernetes "k8s.io/client-go/kubernetes/fake"
 )
 
-// FkClientSet : hold fake ClientSets
+// fkClientSet holds fake ClientSets
+// this is returned by FakeNew to access methods of fake client sets
 type FkClientSet struct {
-	kubeClientset    *fkkubernetes.Clientset
-	imageClientset   *fkimageclientset.Clientset
-	appsClientset    *fkappsclientset.Clientset
-	buildClientset   *fkbuildclientset.Clientset
-	projectClientset *fkprojectclientset.Clientset
-	routeClientset   *fkrouteClientset.Clientset
+	RouteClientset *fkrouteClientset.Clientset
 }
 
-// FakeNew : create new fake client
+// FakeNew create new fake client for testing
+// returns Client that is filled with fake clients and
+// fkClientSet that holds fake Clientsets to access Actions, Reactors etc... in fake client
 func FakeNew() (*Client, *FkClientSet) {
 	var client Client
 	var fkclientset FkClientSet
 
-	routeClient := fkrouteClientset.NewSimpleClientset()
-	fkclientset.routeClientset = routeClient
-	client.routeClient = fkclientset.routeClientset.Route()
+	fkclientset.RouteClientset = fkrouteClientset.NewSimpleClientset()
+	client.routeClient = fkclientset.RouteClientset.Route()
 
 	return &client, &fkclientset
 }
