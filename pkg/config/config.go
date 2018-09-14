@@ -139,6 +139,7 @@ func (c *ConfigInfo) SetConfiguration(parameter string, value bool) error {
 
 // GetupdateNotification returns the value of UpdateNotification from config
 func (c *ConfigInfo) GetUpdateNotification() bool {
+
 	fmt.Printf("c.OdoSettings = %#v\n", c.OdoSettings)
 	if c.OdoSettings.UpdateNotification == nil {
 		return true
