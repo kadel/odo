@@ -18,7 +18,7 @@ jobs:
         - make goget-tools
       script:
         - make bin
-        - ./odo version
+        - ./odo -v 10 version
     #     - make test
 
     # - <<: *base-test
