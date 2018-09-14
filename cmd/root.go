@@ -103,9 +103,8 @@ func Execute() {
 	// checking the value of updatenotification in config
 	// before proceeding with fetching the latest version
 	cfg, err := config.New()
-	if err != nil {
-		fmt.Println("unable to fetch configuration from Odo config file.")
-	}
+	checkError(err, "Unable to fetch configuration from Odo config file.")
+
 	if cfg.GetUpdateNotification() == true {
 		updateInfo := make(chan string)
 		go getLatestReleaseInfo(updateInfo)
