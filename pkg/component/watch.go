@@ -131,10 +131,20 @@ func WatchAndPush(client *occlient.Client, componentName string, applicationName
 				changeLock.Lock()
 				glog.V(4).Infof("filesystem watch event: %s", event)
 
-				stat, err := os.Lstat(event.Name)
-				if err != nil {
-					glog.Errorf("Failed getting details of the changed file %s", event.Name)
-					watchError = errors.Wrap(err, "unable to watch changes")
+				// It doesn't make sense to do the following check if this Remove or Rename event (file won't exist)
+				if !(event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename) {
+					stat, err := os.Lstat(event.Name)
+					if err != nil {
+						glog.Errorf("Failed getting details of the changed file %s", event.Name)
+						watchError = errors.Wrap(err, "unable to watch changes")
+					}
+					// In windows, every new file created under a sub-directory of the watched directory, raises 2 events:
+					// 1. Write event for the directory under which the file was created
+					// 2. Create event for the file that was created
+					// Ignore 1 to avoid duplicate events.
+					if stat.IsDir() && event.Op&fsnotify.Write == fsnotify.Write {
+						break
+					}
 				}
 
 				// add file name to changedFiles only once
@@ -156,13 +166,7 @@ func WatchAndPush(client *occlient.Client, componentName string, applicationName
 					watchError = errors.Wrap(err, "unable to watch changes")
 				}
 				if !alreadyInChangedFiles && !matched {
-					// In windows, every new file created under a sub-directory of the watched directory, raises 2 events:
-					// 1. Write event for the directory under which the file was created
-					// 2. Create event for the file that was created
-					// Ignore 1 to avoid duplicate events.
-					if !(stat.IsDir() && event.Op&fsnotify.Write == fsnotify.Write) {
-						changedFiles = append(changedFiles, event.Name)
-					}
+					changedFiles = append(changedFiles, event.Name)
 				}
 
 				lastChange = time.Now()
