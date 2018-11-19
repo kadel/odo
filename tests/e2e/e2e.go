@@ -47,9 +47,9 @@ func runFailCmd(cmdS string) string {
 // It times out if the command doesn't fetch the
 // expected output  within the timeout period.
 func waitForCmdOut(cmd string, timeout int, check func(output string) bool) bool {
-
 	pingTimeout := time.After(time.Duration(timeout) * time.Minute)
 	tick := time.Tick(time.Second)
+	fmt.Fprintf(GinkgoWriter, "Running command until desired output: %s\n", cmd)
 
 	for {
 		select {
@@ -61,7 +61,7 @@ func waitForCmdOut(cmd string, timeout int, check func(output string) bool) bool
 			if err != nil {
 				Fail(err.Error())
 			}
-
+			fmt.Fprintf(GinkgoWriter, "Output: %s\n", out)
 			if check(string(out)) {
 				return true
 			}
