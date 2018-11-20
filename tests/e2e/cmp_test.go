@@ -90,7 +90,7 @@ var _ = Describe("odoCmpE2e", func() {
 			time.Sleep(90 * time.Second)
 
 			// Run push
-			runCmd("odo push -v 4")
+			runCmd("odo push -v 10")
 
 			cmpList := runCmd("odo list")
 			Expect(cmpList).To(ContainSubstring("wildfly"))
@@ -103,7 +103,7 @@ var _ = Describe("odoCmpE2e", func() {
 				"'https://gist.github.com/mik-dass/f95bd818ddba508ff76a386f8d984909/raw/85354d9ee8583a9c1e64a331425eede235b07a9e/sample%2520(1).war'")
 
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --binary " + tmpDir + "/sample-binary-testing-2.war")
+			runCmd("odo  -v 10 update wildfly --binary " + tmpDir + "/sample-binary-testing-2.war")
 
 			// checking for init containers
 			getDc := runCmd("oc get dc wildfly-" + appTestName + " -o go-template='" +
@@ -131,7 +131,7 @@ var _ = Describe("odoCmpE2e", func() {
 				tmpDir + "/katacoda-odo-backend-1")
 
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --local " + tmpDir + "/katacoda-odo-backend-1")
+			runCmd("odo  -v 10 update wildfly --local " + tmpDir + "/katacoda-odo-backend-1")
 
 			// checking for init containers
 			getDc := runCmd("oc get dc wildfly-" + appTestName + " -o go-template='" +
@@ -170,7 +170,7 @@ var _ = Describe("odoCmpE2e", func() {
 					fmt.Printf("Failed performing file operation with error %v", err)
 				}
 			}()
-			success, err := pollNonRetCmdStdOutForString("odo watch wildfly-watch -v 4", time.Duration(5)*time.Minute, func(output string) bool {
+			success, err := pollNonRetCmdStdOutForString("odo watch wildfly-watch -v 10", time.Duration(5)*time.Minute, func(output string) bool {
 				return strings.Contains(output, fmt.Sprintf("File %s changed", filepath.Join(filepath.Join(tmpDir, "katacoda-odo-backend-1"), "src/main/java/eu/mjelen/katacoda/odo/BackendServlet.java")))
 			})
 			Expect(success).To(Equal(true))
@@ -182,7 +182,7 @@ var _ = Describe("odoCmpE2e", func() {
 				tmpDir + "/katacoda-odo-backend-2")
 
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --local " + tmpDir + "/katacoda-odo-backend-2")
+			runCmd("odo  -v 10 update wildfly --local " + tmpDir + "/katacoda-odo-backend-2")
 
 			// checking for init containers
 			getDc := runCmd("oc get dc wildfly-" + appTestName + " -o go-template='" +
@@ -207,7 +207,7 @@ var _ = Describe("odoCmpE2e", func() {
 
 		It("should update component from local to git", func() {
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --git " + wildflyUri1)
+			runCmd("odo  -v 10 update wildfly --git " + wildflyUri1)
 
 			// checking bc for updates
 			getBc := runCmd("oc get bc wildfly-" + appTestName + " -o go-template={{.spec.source.git.uri}}")
@@ -236,7 +236,7 @@ var _ = Describe("odoCmpE2e", func() {
 
 		It("should update component from git to git", func() {
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --git " + wildflyUri2)
+			runCmd("odo  -v 10 update wildfly --git " + wildflyUri2)
 
 			// checking bc for updates
 			getBc := runCmd("oc get bc wildfly-" + appTestName + " -o go-template={{.spec.source.git.uri}}")
@@ -265,7 +265,7 @@ var _ = Describe("odoCmpE2e", func() {
 
 		It("should update component from git to binary", func() {
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --binary " + tmpDir + "/sample-binary-testing-1.war")
+			runCmd("odo  -v 10 update wildfly --binary " + tmpDir + "/sample-binary-testing-1.war")
 
 			// checking for init containers
 			getDc := runCmd("oc get dc wildfly-" + appTestName + " -o go-template='" +
@@ -290,7 +290,7 @@ var _ = Describe("odoCmpE2e", func() {
 
 		It("should update component from binary to git", func() {
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --git " + wildflyUri1)
+			runCmd("odo  -v 10 update wildfly --git " + wildflyUri1)
 
 			// checking bc for updates
 			getBc := runCmd("oc get bc wildfly-" + appTestName + " -o go-template={{.spec.source.git.uri}}")
@@ -319,7 +319,7 @@ var _ = Describe("odoCmpE2e", func() {
 
 		It("should update component from git to local", func() {
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --local " + tmpDir + "/katacoda-odo-backend-1")
+			runCmd("odo  -v 10 update wildfly --local " + tmpDir + "/katacoda-odo-backend-1")
 
 			// checking for init containers
 			getDc := runCmd("oc get dc wildfly-" + appTestName + " -o go-template='" +
@@ -344,7 +344,7 @@ var _ = Describe("odoCmpE2e", func() {
 
 		It("should update component from local to binary", func() {
 			waitForDCOfComponentToRolloutCompletely("wildfly")
-			runCmd("odo  -v 4 update wildfly --binary " + tmpDir + "/sample-binary-testing-1.war")
+			runCmd("odo  -v 10 update wildfly --binary " + tmpDir + "/sample-binary-testing-1.war")
 
 			// checking for init containers
 			getDc := runCmd("oc get dc wildfly-" + appTestName + " -o go-template='" +
@@ -385,7 +385,7 @@ var _ = Describe("odoCmpE2e", func() {
 func waitForDCOfComponentToRolloutCompletely(componentName string) {
 	fullDCName := runCmd(fmt.Sprintf("oc get dc -l app.kubernetes.io/component-name=%s -o name | tr -d '\n'", componentName))
 	// oc rollout status ensures that the existing DC is fully rolled out before it terminates
-	// we need this because a rolling DC could cause odo  -v 4 update to fail due to its use
+	// we need this because a rolling DC could cause odo  -v 10 update to fail due to its use
 	// of the read/update-in-memory/write-changes pattern
 	runCmd("oc rollout status " + fullDCName)
 
