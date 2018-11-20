@@ -580,7 +580,7 @@ func Update(client *occlient.Client, componentName string, applicationName strin
 		// Cleanup after the supervisor
 		err = client.CleanupAfterSupervisor(namespacedOpenShiftObject, annotations)
 		if err != nil {
-			return errors.Wrapf(err, "unable to update DeploymentConfig  for %s component", componentName)
+			return errors.Wrapf(err, "unable to cleanup after supervisor  for %s component", componentName)
 		}
 
 		// Finally, we build!
