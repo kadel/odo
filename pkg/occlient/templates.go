@@ -2,9 +2,12 @@ package occlient
 
 import (
 	"fmt"
+	"strings"
 
 	appsv1 "github.com/openshift/api/apps/v1"
 	buildv1 "github.com/openshift/api/build/v1"
+	componentlabels "github.com/redhat-developer/odo/pkg/component/labels"
+	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +19,87 @@ type CommonImageMeta struct {
 	Tag       string
 	Namespace string
 	Ports     []corev1.ContainerPort
+}
+
+func applyConfigToDeploymentConfig(componentConfig config.ComponentSettings, dc *appsv1.DeploymentConfig, namespacedDCName string, appName string) {
+
+	componentName := ""
+	if componentConfig.ComponentName != nil {
+		componentName = *(componentConfig.ComponentName)
+	} else {
+		// extract component name from dc
+		componentName = dc.ObjectMeta.Labels[componentlabels.ComponentLabel]
+	}
+
+	// Get Image params from existing dc
+	// ToDo: Add image details to config
+	triggers := dc.Spec.Triggers
+	imageNS := ""
+	imageName := ""
+	for _, trigger := range triggers {
+		if trigger.Type == "ImageChange" {
+			imageNS = trigger.ImageChangeParams.From.Namespace
+			imageName = trigger.ImageChangeParams.From.Name
+		}
+	}
+
+	componentType := ""
+	if componentConfig.ComponentType != nil {
+		componentType = *(componentConfig.ComponentType)
+	} else {
+		componentType = strings.Split(imageName, ":")[0]
+	}
+
+	// Retrieve labels
+	// Save component type as label
+	labels := componentlabels.GetLabels(componentName, appName, true)
+	labels[componentlabels.ComponentTypeLabel] = componentType
+	// ToDo(@anmolbabu): Add logic to persist and here, fetch component version
+	labels[componentlabels.ComponentTypeVersion] = dc.ObjectMeta.Labels[componentlabels.ComponentTypeVersion] //imageTag
+
+	// ObjectMetadata are the same for all generated objects
+	// Create common metadata that will be updated throughout all objects.
+	commonObjectMeta := metav1.ObjectMeta{
+		Name:   namespacedDCName,
+		Labels: labels,
+		// ToDo(@anmolbabu): Create annotations
+		Annotations: dc.ObjectMeta.Annotations,
+	}
+
+	// Gather the common image data into one struct
+	commonImageMeta := CommonImageMeta{
+		Name:      labels[componentlabels.ComponentTypeLabel],
+		Tag:       labels[componentlabels.ComponentTypeVersion],
+		Namespace: imageNS,
+		Ports:     dc.Spec.Template.Spec.Containers[0].Ports,
+	}
+
+	resourceReqs := []util.ResourceRequirementInfo{}
+	var resourceRequirements *corev1.ResourceRequirements
+	if componentConfig.MinCPU != nil && componentConfig.MaxCPU != nil {
+		cpuResourceConstraints := util.FetchResourceQuantity(corev1.ResourceCPU, *componentConfig.MinCPU, *componentConfig.MaxCPU, "")
+		resourceReqs = append(resourceReqs, *cpuResourceConstraints)
+	}
+	if componentConfig.MinMemory != nil && componentConfig.MaxMemory != nil {
+		memoryResourceConstraints := util.FetchResourceQuantity(corev1.ResourceMemory, *componentConfig.MinMemory, *componentConfig.MaxMemory, "")
+		resourceReqs = append(resourceReqs, *memoryResourceConstraints)
+	}
+	if len(resourceReqs) > 0 {
+		resourceRequirements = getResourceRequirementsFromRawData(resourceReqs)
+	}
+
+	*dc = generateSupervisordDeploymentConfig(
+		commonObjectMeta,
+		fmt.Sprintf("%s:%s", labels[componentlabels.ComponentTypeLabel], labels[componentlabels.ComponentTypeVersion]),
+		commonImageMeta,
+		dc.Spec.Template.Spec.Containers[0].Env,
+		dc.Spec.Template.Spec.Containers[0].EnvFrom,
+		resourceRequirements,
+	)
+
+	// Add the appropriate bootstrap volumes for SupervisorD
+	addBootstrapVolumeCopyInitContainer(dc, commonObjectMeta.Name)
+	addBootstrapSupervisordInitContainer(dc, commonObjectMeta.Name)
 }
 
 func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, builderImage string, commonImageMeta CommonImageMeta,

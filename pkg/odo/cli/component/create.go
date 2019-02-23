@@ -2,11 +2,12 @@ package component
 
 import (
 	"fmt"
-	"github.com/redhat-developer/odo/pkg/odo/cli/component/ui"
-	commonui "github.com/redhat-developer/odo/pkg/odo/cli/ui"
-	"io"
 	"os"
 	"strings"
+
+	"github.com/redhat-developer/odo/pkg/config"
+	"github.com/redhat-developer/odo/pkg/odo/cli/component/ui"
+	commonui "github.com/redhat-developer/odo/pkg/odo/cli/ui"
 
 	"github.com/pkg/errors"
 	appCmd "github.com/redhat-developer/odo/pkg/odo/cli/application"
@@ -18,12 +19,8 @@ import (
 	"github.com/redhat-developer/odo/pkg/odo/util/completion"
 	"github.com/redhat-developer/odo/pkg/odo/util/validation"
 
-	"github.com/fatih/color"
-	"github.com/golang/glog"
-	"github.com/redhat-developer/odo/pkg/application"
 	"github.com/redhat-developer/odo/pkg/catalog"
 	"github.com/redhat-developer/odo/pkg/component"
-	"github.com/redhat-developer/odo/pkg/occlient"
 	catalogutil "github.com/redhat-developer/odo/pkg/odo/cli/catalog/util"
 	"github.com/redhat-developer/odo/pkg/util"
 	"github.com/spf13/cobra"
@@ -33,12 +30,12 @@ import (
 
 // CreateOptions encapsulates create options
 type CreateOptions struct {
-	occlient.CreateArgs
+	localConfig *config.LocalConfigInfo
 	*genericclioptions.Context
 	componentBinary  string
 	componentGit     string
 	componentGitRef  string
-	componentLocal   string
+	componentContext string
 	componentPorts   []string
 	componentEnvVars []string
 	memoryMax        string
@@ -54,7 +51,7 @@ type CreateOptions struct {
 // CreateRecommendedCommandName is the recommended watch command name
 const CreateRecommendedCommandName = "create"
 
-var createLongDesc = ktemplates.LongDesc(`Create a new component to deploy on OpenShift.
+var createLongDesc = ktemplates.LongDesc(`Create a configuration describing component to be deployed by  on OpenShift.
 
 If a component name is not provided, it'll be auto-generated.
 
@@ -112,25 +109,32 @@ func NewCreateOptions() *CreateOptions {
 }
 
 func (co *CreateOptions) setCmpSourceAttrs() (err error) {
+
+	if len(co.componentContext) != 0 {
+		err = co.localConfig.GetLocalConfigFileFromPath(co.componentContext)
+		if err != nil {
+			return errors.Wrap(err, "failed intialising component config file")
+		}
+	}
+
 	componentCnt := 0
+	localSrcCmp := string(util.LOCAL)
+	co.localConfig.ComponentSettings.Type = &localSrcCmp
 
 	if len(co.componentBinary) != 0 {
-		if co.CreateArgs.SourcePath, err = util.GetAbsPath(co.componentBinary); err != nil {
+		cPath, err := util.GetAbsPath(co.componentBinary)
+		if err != nil {
 			return err
 		}
-		co.CreateArgs.SourceType = occlient.BINARY
+		co.localConfig.ComponentSettings.Path = &cPath
+		binarySrcCmp := string(util.BINARY)
+		co.localConfig.ComponentSettings.Type = &binarySrcCmp
 		componentCnt++
 	}
 	if len(co.componentGit) != 0 {
-		co.CreateArgs.SourcePath = co.componentGit
-		co.CreateArgs.SourceType = occlient.GIT
-		componentCnt++
-	}
-	if len(co.componentLocal) != 0 {
-		if co.CreateArgs.SourcePath, err = util.GetAbsPath(co.componentLocal); err != nil {
-			return err
-		}
-		co.CreateArgs.SourceType = occlient.LOCAL
+		co.localConfig.ComponentSettings.Path = &(co.componentGit)
+		gitSrcCmp := string(util.GIT)
+		co.localConfig.ComponentSettings.Type = &gitSrcCmp
 		componentCnt++
 	}
 
@@ -139,7 +143,7 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 	}
 
 	if len(co.componentGitRef) != 0 {
-		co.CreateArgs.SourceRef = co.componentGitRef
+		co.localConfig.ComponentSettings.Ref = &(co.componentGitRef)
 	}
 
 	if len(co.componentGit) == 0 && len(co.componentGitRef) != 0 {
@@ -151,23 +155,32 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 
 func (co *CreateOptions) setCmpName(args []string) (err error) {
 	componentImageName, componentType, _, _ := util.ParseComponentImageName(args[0])
-	co.CreateArgs.ImageName = componentImageName
+	co.localConfig.ComponentSettings.ComponentType = &componentImageName
 
 	if len(args) == 2 {
-		co.CreateArgs.Name = args[1]
+		co.localConfig.ComponentSettings.ComponentName = &args[1]
 		return
 	}
 
-	componentName, err := createDefaultComponentName(co.Context, componentType, co.CreateArgs.SourceType, co.CreateArgs.SourcePath)
+	cmpSrcType, err := util.GetCreateType(*(co.localConfig.ComponentSettings.Type))
+	if err != nil {
+		return errors.Wrap(err, "failed to generate a name for component")
+	}
+	componentName, err := createDefaultComponentName(
+		co.Context,
+		componentType,
+		cmpSrcType,
+		co.componentContext,
+	)
 	if err != nil {
 		return err
 	}
 
-	co.CreateArgs.Name = componentName
+	co.localConfig.ComponentSettings.ComponentName = &componentName
 	return
 }
 
-func createDefaultComponentName(context *genericclioptions.Context, componentType string, sourceType occlient.CreateType, sourcePath string) (string, error) {
+func createDefaultComponentName(context *genericclioptions.Context, componentType string, sourceType util.CreateType, sourcePath string) (string, error) {
 	// Fetch list of existing components in-order to attempt generation of unique component name
 	componentList, err := component.List(context.Client, context.Application)
 	if err != nil {
@@ -194,16 +207,21 @@ func (co *CreateOptions) setResourceLimits() {
 
 	ensureAndLogProperResourceUsage(co.cpu, co.cpuMin, co.cpuMax, "cpu")
 
-	resourceQuantity := []util.ResourceRequirementInfo{}
 	memoryQuantity := util.FetchResourceQuantity(corev1.ResourceMemory, co.memoryMin, co.memoryMax, co.memory)
 	if memoryQuantity != nil {
-		resourceQuantity = append(resourceQuantity, *memoryQuantity)
+		minMemory := memoryQuantity.MinQty.String()
+		maxMemory := memoryQuantity.MaxQty.String()
+		co.localConfig.ComponentSettings.MinMemory = &minMemory
+		co.localConfig.ComponentSettings.MaxMemory = &maxMemory
 	}
+
 	cpuQuantity := util.FetchResourceQuantity(corev1.ResourceCPU, co.cpuMin, co.cpuMax, co.cpu)
 	if cpuQuantity != nil {
-		resourceQuantity = append(resourceQuantity, *cpuQuantity)
+		minCPU := cpuQuantity.MinQty.String()
+		maxCPU := cpuQuantity.MaxQty.String()
+		co.localConfig.ComponentSettings.MinCPU = &minCPU
+		co.localConfig.ComponentSettings.MaxCPU = &maxCPU
 	}
-	co.CreateArgs.Resources = resourceQuantity
 }
 
 // Complete completes create args
@@ -212,8 +230,13 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 		co.interactive = true
 	}
 
+	co.localConfig, err = config.NewLocalConfigInfo()
+	if err != nil {
+		return errors.Wrap(err, "failed intiating local config")
+	}
+
 	co.Context = genericclioptions.NewContextCreatingAppIfNeeded(cmd)
-	co.CreateArgs.ApplicationName = co.Context.Application
+	co.localConfig.ComponentSettings.App = &(co.Context.Application)
 
 	if co.interactive {
 		client := co.Client
@@ -225,43 +248,44 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 		componentTypeCandidates = catalogutil.FilterHiddenComponents(componentTypeCandidates)
 		selectedComponentType := ui.SelectComponentType(componentTypeCandidates)
 		selectedImageTag := ui.SelectImageTag(componentTypeCandidates, selectedComponentType)
-		co.CreateArgs.ImageName = selectedComponentType + ":" + selectedImageTag
+		componentType := selectedComponentType + ":" + selectedImageTag
+		co.localConfig.ComponentSettings.ComponentType = &componentType
 
-		selectedSourceType := ui.SelectSourceType([]occlient.CreateType{occlient.LOCAL, occlient.GIT, occlient.BINARY})
-		co.CreateArgs.SourceType = selectedSourceType
+		selectedSourceType := ui.SelectSourceType([]util.CreateType{util.LOCAL, util.GIT, util.BINARY})
+		componentSrcType := string(selectedSourceType)
+		co.localConfig.ComponentSettings.Type = &componentSrcType
 		selectedSourcePath := ""
 		currentDirectory, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		if selectedSourceType == occlient.LOCAL {
-			selectedSourcePath = ui.EnterInputTypePath("local", currentDirectory, ".")
-			selectedSourcePath, err = util.GetAbsPath(selectedSourcePath)
-			if err != nil {
-				return err
-			}
-		} else if selectedSourceType == occlient.BINARY {
+		if selectedSourceType == util.BINARY {
 			selectedSourcePath = ui.EnterInputTypePath("binary", currentDirectory)
 			selectedSourcePath, err = util.GetAbsPath(selectedSourcePath)
 			if err != nil {
 				return err
 			}
-		} else if selectedSourceType == occlient.GIT {
+		} else if selectedSourceType == util.GIT {
 			var selectedGitRef string
 			selectedSourcePath, selectedGitRef = ui.EnterGitInfo()
-			co.CreateArgs.SourceRef = selectedGitRef
+			co.localConfig.ComponentSettings.Ref = &selectedGitRef
 		}
-		co.CreateArgs.SourcePath = selectedSourcePath
+		co.localConfig.ComponentSettings.Path = &selectedSourcePath
 
 		defaultComponentName, err := createDefaultComponentName(co.Context, selectedComponentType, selectedSourceType, selectedSourcePath)
 		if err != nil {
 			return err
 		}
-		co.CreateArgs.Name = ui.EnterComponentName(defaultComponentName, co.Context)
+		componentName := ui.EnterComponentName(defaultComponentName, co.Context)
+		co.localConfig.ComponentSettings.ComponentName = &componentName
 
 		if commonui.Proceed("Do you wish to set advanced options") {
-			co.CreateArgs.Ports = ui.EnterPorts()
-			co.CreateArgs.EnvVars = ui.EnterEnvVars()
+			ports := ui.EnterPorts()
+			if len(ports) > 0 {
+				portsStr := strings.Join(ports, " ")
+				co.localConfig.ComponentSettings.Ports = &portsStr
+			}
+			co.componentEnvVars = ui.EnterEnvVars()
 
 			if commonui.Proceed("Do you wish to set resource limits") {
 				memMax := ui.EnterMemory("maximum", "512Mi")
@@ -269,25 +293,19 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 				cpuMax := ui.EnterCPU("maximum", "1")
 				cpuMin := ui.EnterCPU("minimum", cpuMax)
 
-				resourceQuantity := []util.ResourceRequirementInfo{}
 				memoryQuantity := util.FetchResourceQuantity(corev1.ResourceMemory, memMin, memMax, "")
 				if memoryQuantity != nil {
-					resourceQuantity = append(resourceQuantity, *memoryQuantity)
+					co.localConfig.ComponentSettings.MinMemory = &memMin
+					co.localConfig.ComponentSettings.MaxMemory = &memMax
 				}
 				cpuQuantity := util.FetchResourceQuantity(corev1.ResourceCPU, cpuMin, cpuMax, "")
 				if cpuQuantity != nil {
-					resourceQuantity = append(resourceQuantity, *cpuQuantity)
+					co.localConfig.ComponentSettings.MinCPU = &cpuMin
+					co.localConfig.ComponentSettings.MaxCPU = &cpuMax
 				}
-				co.CreateArgs.Resources = resourceQuantity
 			}
 		}
-
-		co.CreateArgs.Wait = commonui.Proceed("Would you wish to wait until the component is fully ready after after creation")
-		// needed in order to avoid showing a misleading message at the end of process
-		co.wait = co.CreateArgs.Wait
-
 	} else {
-		co.CreateArgs.Wait = co.wait
 		err = co.setCmpSourceAttrs()
 		if err != nil {
 			return err
@@ -297,16 +315,20 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 			return err
 		}
 		co.setResourceLimits()
-		co.CreateArgs.Ports = co.componentPorts
-		co.CreateArgs.EnvVars = co.componentEnvVars
+		if len(co.componentPorts) > 0 {
+			portsStr := strings.Join(co.componentPorts, " ")
+			co.localConfig.ComponentSettings.Ports = &portsStr
+		}
 	}
+
+	co.localConfig.ComponentSettings.Project = &(co.Context.Project)
 
 	return
 }
 
 // Validate validates the create parameters
 func (co *CreateOptions) Validate() (err error) {
-	_, componentType, _, componentVersion := util.ParseComponentImageName(co.CreateArgs.ImageName)
+	_, componentType, _, componentVersion := util.ParseComponentImageName(*(co.localConfig.ComponentSettings.ComponentType))
 	// Check to see if the catalog type actually exists
 	exists, err := catalog.Exists(co.Context.Client, componentType)
 	if err != nil {
@@ -328,107 +350,61 @@ func (co *CreateOptions) Validate() (err error) {
 	}
 
 	// Validate component name
-	err = validation.ValidateName(co.CreateArgs.Name)
+	err = validation.ValidateName(*(co.localConfig.ComponentSettings.ComponentName))
 	if err != nil {
-		return errors.Wrapf(err, "failed to create component of name %s", co.CreateArgs.Name)
+		return errors.Wrapf(err, "failed to create component of name %s", *(co.localConfig.ComponentSettings.ComponentName))
 	}
 
-	exists, err = component.Exists(co.Context.Client, co.CreateArgs.Name, co.Context.Application)
+	exists, err = component.Exists(co.Context.Client, *(co.localConfig.ComponentSettings.ComponentName), co.Context.Application)
 	if err != nil {
-		return errors.Wrapf(err, "failed to check if component of name %s exists in application %s", co.CreateArgs.Name, co.Context.Application)
+		return errors.Wrapf(err, "failed to check if component of name %s exists in application %s", *(co.localConfig.ComponentSettings.ComponentName), co.Context.Application)
 	}
 	if exists {
-		return fmt.Errorf("component with name %s already exists in application %s", co.CreateArgs.Name, co.Context.Application)
+		return fmt.Errorf("component with name %s already exists in application %s", *(co.localConfig.ComponentSettings.ComponentName), co.Context.Application)
 	}
 
-	return
-}
-
-// createComponent creates the component
-func (co *CreateOptions) createComponent(stdout io.Writer) (err error) {
-	log.Successf("Initializing '%s' component", co.CreateArgs.Name)
-	switch co.CreateArgs.SourceType {
-	case occlient.GIT:
-		// Use Git
-		if err = component.CreateFromGit(
-			co.Context.Client,
-			co.CreateArgs,
-		); err != nil {
-			return errors.Wrapf(err, "failed to create component with args %+v", co.CreateArgs)
-		}
-		// Git is the only one using BuildConfig since we need to retrieve the git
-		if err = component.Build(co.Context.Client, co.CreateArgs.Name, co.CreateArgs.ApplicationName, co.wait, stdout); err != nil {
-			return errors.Wrapf(err, "failed to build component with args %+v", co)
-		}
-	case occlient.LOCAL:
-		fileInfo, err := os.Stat(co.CreateArgs.SourcePath)
-		if err != nil {
-			return errors.Wrapf(err, "failed to get info of path %+v of component %+v", co.CreateArgs.SourcePath, co.CreateArgs)
-		}
-		if !fileInfo.IsDir() {
-			return fmt.Errorf("component creation with args %+v as path needs to be a directory", co.CreateArgs)
-		}
-		// Create
-		if err = component.CreateFromPath(co.Context.Client, co.CreateArgs); err != nil {
-			return errors.Wrapf(err, "failed to create component with args %+v", co.CreateArgs)
-		}
-	case occlient.BINARY:
-		if err = component.CreateFromPath(co.Context.Client, co.CreateArgs); err != nil {
-			return errors.Wrapf(err, "failed to create component with args %+v", co.CreateArgs)
-		}
-	default:
-		// If the user does not provide anything (local, git or binary), use the current absolute path and deploy it
-		co.CreateArgs.SourceType = occlient.LOCAL
-		dir, err := os.Getwd()
-		if err != nil {
-			return errors.Wrapf(err, "cannot create component with current path as local source path since no component source details are passed")
-		}
-		co.CreateArgs.SourcePath = dir
-		if err = component.CreateFromPath(co.Context.Client, co.CreateArgs); err != nil {
-			return errors.Wrapf(err, "")
-		}
-	}
+	*(co.localConfig.ComponentSettings.App) = co.Context.Application
 	return
 }
 
 // Run has the logic to perform the required actions as part of command
 func (co *CreateOptions) Run() (err error) {
-	stdout := color.Output
-	glog.V(4).Infof("Component create called with args: %#v", co.CreateArgs)
-
-	err = co.createComponent(stdout)
-	if err != nil {
-		return err
+	if co.localConfig.ComponentSettings.ComponentType != nil {
+		err = co.localConfig.SetConfiguration("ComponentType", *(co.localConfig.ComponentSettings.ComponentType))
 	}
-
-	ports, err := component.GetComponentPorts(co.Context.Client, co.CreateArgs.Name, co.Context.Application)
-	if err != nil {
-		return errors.Wrapf(err, "error getting ports for component with details %+v", co.CreateArgs)
+	if co.localConfig.ComponentSettings.App != nil {
+		err = co.localConfig.SetConfiguration("App", *(co.localConfig.ComponentSettings.App))
 	}
-
-	if len(ports) > 1 {
-		log.Successf("Component '%s' was created and ports %s were opened", co.CreateArgs.Name, strings.Join(ports, ","))
-	} else if len(ports) == 1 {
-		log.Successf("Component '%s' was created and port %s was opened", co.CreateArgs.Name, ports[0])
+	if co.localConfig.ComponentSettings.ComponentName != nil {
+		err = co.localConfig.SetConfiguration("ComponentName", *(co.localConfig.ComponentSettings.ComponentName))
 	}
-
-	// after component is successfully created, set is as active
-	if err = application.SetCurrent(co.Context.Client, co.Context.Application); err != nil {
-		return errors.Wrapf(err, "failed to set %s application as current", co.Context.Application)
+	if co.localConfig.ComponentSettings.MaxCPU != nil {
+		err = co.localConfig.SetConfiguration("MaxCPU", *(co.localConfig.ComponentSettings.MaxCPU))
 	}
-	if err = component.SetCurrent(co.CreateArgs.Name, co.Context.Application, co.Context.Project); err != nil {
-		return errors.Wrapf(err, "failed to set %s as current component", co.CreateArgs.Name)
+	if co.localConfig.ComponentSettings.MaxMemory != nil {
+		err = co.localConfig.SetConfiguration("MaxMemory", *(co.localConfig.ComponentSettings.MaxMemory))
 	}
-	log.Successf("Component '%s' is now set as active component", co.CreateArgs.Name)
-
-	if len(co.componentGit) == 0 {
-		log.Info("To push source code to the component run 'odo push'")
+	if co.localConfig.ComponentSettings.MinCPU != nil {
+		err = co.localConfig.SetConfiguration("MinCPU", *(co.localConfig.ComponentSettings.MinCPU))
 	}
-
-	if !co.wait {
-		log.Info("This may take a few moments to be ready")
+	if co.localConfig.ComponentSettings.MinMemory != nil {
+		err = co.localConfig.SetConfiguration("MinMemory", *(co.localConfig.ComponentSettings.MinMemory))
 	}
-
+	if co.localConfig.ComponentSettings.Path != nil {
+		err = co.localConfig.SetConfiguration("Path", *(co.localConfig.ComponentSettings.Path))
+	}
+	if co.localConfig.ComponentSettings.Ports != nil {
+		err = co.localConfig.SetConfiguration("Ports", *(co.localConfig.ComponentSettings.Ports))
+	}
+	if co.localConfig.ComponentSettings.Ref != nil {
+		err = co.localConfig.SetConfiguration("Ref", *(co.localConfig.ComponentSettings.Ref))
+	}
+	if co.localConfig.ComponentSettings.Type != nil {
+		err = co.localConfig.SetConfiguration("Type", *(co.localConfig.ComponentSettings.Type))
+	}
+	if co.localConfig.ComponentSettings.Project != nil {
+		err = co.localConfig.SetConfiguration("Project", *(co.localConfig.ComponentSettings.Project))
+	}
 	return
 }
 
@@ -463,7 +439,7 @@ func NewCmdCreate(name, fullName string) *cobra.Command {
 	componentCreateCmd.Flags().StringVarP(&co.componentBinary, "binary", "b", "", "Use a binary as the source file for the component")
 	componentCreateCmd.Flags().StringVarP(&co.componentGit, "git", "g", "", "Use a git repository as the source file for the component")
 	componentCreateCmd.Flags().StringVarP(&co.componentGitRef, "ref", "r", "", "Use a specific ref e.g. commit, branch or tag of the git repository")
-	componentCreateCmd.Flags().StringVarP(&co.componentLocal, "local", "l", "", "Use local directory as a source file for the component")
+	componentCreateCmd.Flags().StringVar(&co.componentContext, "context", "", "Use local directory as a source file for the component")
 	componentCreateCmd.Flags().StringVar(&co.memory, "memory", "", "Amount of memory to be allocated to the component. ex. 100Mi")
 	componentCreateCmd.Flags().StringVar(&co.memoryMin, "min-memory", "", "Limit minimum amount of memory to be allocated to the component. ex. 100Mi")
 	componentCreateCmd.Flags().StringVar(&co.memoryMax, "max-memory", "", "Limit maximum amount of memory to be allocated to the component. ex. 100Mi")
@@ -472,7 +448,6 @@ func NewCmdCreate(name, fullName string) *cobra.Command {
 	componentCreateCmd.Flags().StringVar(&co.cpuMax, "max-cpu", "", "Limit maximum amount of cpu to be allocated to the component. ex. 1")
 	componentCreateCmd.Flags().StringSliceVarP(&co.componentPorts, "port", "p", []string{}, "Ports to be used when the component is created (ex. 8080,8100/tcp,9100/udp)")
 	componentCreateCmd.Flags().StringSliceVar(&co.componentEnvVars, "env", []string{}, "Environmental variables for the component. For example --env VariableName=Value")
-	componentCreateCmd.Flags().BoolVarP(&co.wait, "wait", "w", false, "Wait until the component is ready")
 
 	// Add a defined annotation in order to appear in the help menu
 	componentCreateCmd.Annotations = map[string]string{"command": "component"}
@@ -484,7 +459,7 @@ func NewCmdCreate(name, fullName string) *cobra.Command {
 	appCmd.AddApplicationFlag(componentCreateCmd)
 
 	completion.RegisterCommandHandler(componentCreateCmd, completion.CreateCompletionHandler)
-	completion.RegisterCommandFlagHandler(componentCreateCmd, "local", completion.FileCompletionHandler)
+	completion.RegisterCommandFlagHandler(componentCreateCmd, "context", completion.FileCompletionHandler)
 	completion.RegisterCommandFlagHandler(componentCreateCmd, "binary", completion.FileCompletionHandler)
 
 	return componentCreateCmd

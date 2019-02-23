@@ -160,5 +160,5 @@ func Exists(client *occlient.Client, projectName string) (bool, error) {
 			return true, nil
 		}
 	}
-	return false, errors.Errorf(" %v project does not exist", projectName)
+	return false, nil
 }

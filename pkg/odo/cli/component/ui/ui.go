@@ -7,7 +7,6 @@ import (
 	"github.com/golang/glog"
 	"github.com/redhat-developer/odo/pkg/catalog"
 	"github.com/redhat-developer/odo/pkg/component"
-	"github.com/redhat-developer/odo/pkg/occlient"
 	"github.com/redhat-developer/odo/pkg/odo/cli/ui"
 	"github.com/redhat-developer/odo/pkg/odo/genericclioptions"
 	"github.com/redhat-developer/odo/pkg/odo/util/validation"
@@ -60,7 +59,7 @@ func getTagCandidates(options []catalog.CatalogImage, selectedComponentType stri
 }
 
 // SelectSourceType lets the user select a specific occlient.CreateType in a prompty
-func SelectSourceType(sourceTypes []occlient.CreateType) occlient.CreateType {
+func SelectSourceType(sourceTypes []util.CreateType) util.CreateType {
 	options := make([]string, len(sourceTypes))
 	for i, sourceType := range sourceTypes {
 		options[i] = fmt.Sprint(sourceType)
@@ -80,7 +79,7 @@ func SelectSourceType(sourceTypes []occlient.CreateType) occlient.CreateType {
 		}
 	}
 	glog.V(4).Infof("Selected source type %s was not part of the source type options", selectedSourceType)
-	return occlient.NONE
+	return util.NONE
 }
 
 // EnterInputTypePath allows the user to specify the path on the filesystem in a prompt
