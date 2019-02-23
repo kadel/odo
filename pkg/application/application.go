@@ -41,7 +41,7 @@ func GetDefaultAppName(existingApps []preference.ApplicationInfo) (string, error
 
 	// If there's no prefix in config file or it is equal to $DIR, use safe default which is the name of current directory
 	if cfg.OdoSettings.NamePrefix == nil || *cfg.OdoSettings.NamePrefix == "" {
-		prefix, err := component.GetComponentDir("", occlient.NONE)
+		prefix, err := component.GetComponentDir("", util.NONE)
 		if err != nil {
 			return "", errors.Wrap(err, "unable to generate random app name")
 		}
@@ -264,7 +264,7 @@ func Exists(client *occlient.Client, appName string) (bool, error) {
 			return true, nil
 		}
 	}
-	return false, errors.Errorf("application %v does not exist in project %v", appName, client.Namespace)
+	return false, nil
 }
 
 // GetMachineReadableFormat returns resource information in machine readable format

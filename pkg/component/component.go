@@ -15,6 +15,7 @@ import (
 	"github.com/pkg/errors"
 	applabels "github.com/redhat-developer/odo/pkg/application/labels"
 	componentlabels "github.com/redhat-developer/odo/pkg/component/labels"
+	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/log"
 	"github.com/redhat-developer/odo/pkg/occlient"
 	"github.com/redhat-developer/odo/pkg/preference"
@@ -38,14 +39,14 @@ const componentNameMaxLen = -1
 //		path: git url or source path or binary path
 //		paramType: One of CreateType as in GIT/LOCAL/BINARY
 // Returns: directory name
-func GetComponentDir(path string, paramType occlient.CreateType) (string, error) {
+func GetComponentDir(path string, paramType util.CreateType) (string, error) {
 	retVal := ""
 	switch paramType {
-	case occlient.GIT:
+	case util.GIT:
 		retVal = strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".git")
-	case occlient.LOCAL:
+	case util.LOCAL:
 		retVal = filepath.Base(path)
-	case occlient.BINARY:
+	case util.BINARY:
 		filename := filepath.Base(path)
 		var extension = filepath.Ext(filename)
 		retVal = filename[0 : len(filename)-len(extension)]
@@ -63,7 +64,7 @@ func GetComponentDir(path string, paramType occlient.CreateType) (string, error)
 // GetDefaultComponentName generates a unique component name
 // Parameters: desired default component name(w/o prefix) and slice of existing component names
 // Returns: Unique component name and error if any
-func GetDefaultComponentName(componentPath string, componentPathType occlient.CreateType, componentType string, existingComponentList ComponentList) (string, error) {
+func GetDefaultComponentName(componentPath string, componentPathType util.CreateType, componentType string, existingComponentList ComponentList) (string, error) {
 	var prefix string
 
 	// Get component names from component list
@@ -400,6 +401,129 @@ func getS2IPaths(podEnvs []corev1.EnvVar) []string {
 	// Append binary backup path to s2i paths list
 	retVal = append(retVal, occlient.DefaultS2IDeploymentBackupDir)
 	return retVal
+}
+
+// CreateComponent creates component as per the passed component settings
+//	Parameters:
+//		client: occlient instance
+//		componentConfig: the component configuration that holds all details of component
+//		context: the component context indicating the location of component config and hence its source as well
+//		stdout: io.Writer instance to write output to
+//	Returns:
+//		err: errors if any
+func CreateComponent(client *occlient.Client, componentConfig config.ComponentSettings, context string, stdout io.Writer) (err error) {
+	log.Successf("Initializing '%s' component", *(componentConfig.ComponentName))
+	createArgs := occlient.CreateArgs{
+		Name:            *(componentConfig.ComponentName),
+		ImageName:       *(componentConfig.ComponentType),
+		ApplicationName: *(componentConfig.App),
+	}
+	createArgs.SourceType, err = util.GetCreateType(*(componentConfig.Type))
+	if err != nil {
+		return errors.Wrapf(err, "failed to create component with config %+v", componentConfig)
+	}
+	if componentConfig.Ports != nil {
+		createArgs.Ports = strings.Split(*(componentConfig.Ports), " ")
+	}
+	if componentConfig.MaxCPU != nil && componentConfig.MinCPU != nil {
+		createArgs.Resources = append(
+			createArgs.Resources,
+			*(util.FetchResourceQuantity(corev1.ResourceCPU, *(componentConfig.MinCPU), *(componentConfig.MaxCPU), "")),
+		)
+	}
+	if componentConfig.MaxMemory != nil && componentConfig.MinMemory != nil {
+		createArgs.Resources = append(
+			createArgs.Resources,
+			*(util.FetchResourceQuantity(corev1.ResourceMemory, *(componentConfig.MinMemory), *(componentConfig.MaxMemory), "")),
+		)
+	}
+	switch *(componentConfig.Type) {
+	case string(util.GIT):
+		// Use Git
+		if componentConfig.Ref != nil {
+			createArgs.SourceRef = *(componentConfig.Ref)
+		}
+		if componentConfig.Path != nil {
+			createArgs.SourcePath = *(componentConfig.Path)
+		}
+		if err = CreateFromGit(
+			client,
+			createArgs,
+		); err != nil {
+			return errors.Wrapf(err, "failed to create component with args %+v", createArgs)
+		}
+		// Git is the only one using BuildConfig since we need to retrieve the git
+		if err = Build(client, createArgs.Name, createArgs.ApplicationName, true, stdout); err != nil {
+			return errors.Wrapf(err, "failed to build component with args %+v", componentConfig)
+		}
+	case string(util.LOCAL):
+		if len(context) > 0 {
+			createArgs.SourcePath = context
+		} else {
+			createArgs.SourcePath, err = os.Getwd()
+			if err != nil {
+				return errors.Wrapf(err, "failed to create component with details as in %+v", componentConfig)
+			}
+		}
+		fileInfo, err := os.Stat(createArgs.SourcePath)
+		if err != nil {
+			return errors.Wrapf(err, "failed to get info of path %+v of component %+v", createArgs.SourcePath, createArgs)
+		}
+		if !fileInfo.IsDir() {
+			return fmt.Errorf("component creation with args %+v as path needs to be a directory", createArgs)
+		}
+		// Create
+		if err = CreateFromPath(client, createArgs); err != nil {
+			return errors.Wrapf(err, "failed to create component with args %+v", createArgs)
+		}
+	case string(util.BINARY):
+		if len(context) > 0 {
+			createArgs.SourcePath, err = filepath.Abs(context)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create component with config %+v", componentConfig)
+			}
+		}
+		if err = CreateFromPath(client, createArgs); err != nil {
+			return errors.Wrapf(err, "failed to create component with args %+v", createArgs)
+		}
+	default:
+		// If the user does not provide anything (local, git or binary), use the current absolute path and deploy it
+		createArgs.SourceType = util.LOCAL
+		dir, err := os.Getwd()
+		if err != nil {
+			return errors.Wrapf(err, "cannot create component with current path as local source path since no component source details are passed")
+		}
+		createArgs.SourcePath = dir
+		if err = CreateFromPath(client, createArgs); err != nil {
+			return errors.Wrapf(err, "")
+		}
+	}
+	return
+}
+
+// ApplyConfig applies the component config onto component dc
+// Parameters:
+//	client: occlient instance
+//	appName: Name of application of which the component is a part
+//	componentName: Name of the component which is being patched with config
+//	componentConfig: Component configuration
+// Returns:
+//	err: Errors if any else nil
+func ApplyConfig(client *occlient.Client, componentConfig config.ComponentSettings, context string, stdout io.Writer) (err error) {
+	// Fetch hyphenated openshift dc name
+	hyphenatedOpenshiftObj, err := util.NamespaceOpenShiftObject(*(componentConfig.ComponentName), *(componentConfig.App))
+	if err != nil {
+		return errors.Wrap(err, "error applying config")
+	}
+	// Fetch DC matching the component details
+	_, err = client.GetDeploymentConfigFromName(hyphenatedOpenshiftObj)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get dc for component %s in application %s", *(componentConfig.ComponentName), *(componentConfig.App))
+	}
+
+	// ToDo: Make this function intelligent to work to detect if there was a change in config between existing component dc and current config and act efficiently
+	err = client.ApplyComponentConfig(*(componentConfig.App), *(componentConfig.ComponentName), componentConfig)
+	return
 }
 
 // PushLocal push local code to the cluster and trigger build there.

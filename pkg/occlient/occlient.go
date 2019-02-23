@@ -21,6 +21,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
 
+	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/log"
 	"github.com/redhat-developer/odo/pkg/preference"
 	"github.com/redhat-developer/odo/pkg/util"
@@ -63,18 +64,9 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-// CreateType is an enum to indicate the type of source of component -- local source/binary or git for the generation of app/component names
-type CreateType string
-
-const (
-	// GIT as source of component
-	GIT CreateType = "git"
-	// LOCAL Local source path as source of component
-	LOCAL CreateType = "local"
-	// BINARY Local Binary as source of component
-	BINARY CreateType = "binary"
-	// NONE indicates there's no information about the type of source of the component
-	NONE CreateType = ""
+var (
+	DEPLOYMENT_CONFIG_NOT_FOUND_ERROR_STR string = "deploymentconfigs.apps.openshift.io \"%s\" not found"
+	DEPLOYMENT_CONFIG_NOT_FOUND           error  = fmt.Errorf("Requested deployment config does not exist")
 )
 
 // CreateArgs is a container of attributes of component create action
@@ -82,7 +74,7 @@ type CreateArgs struct {
 	Name            string
 	SourcePath      string
 	SourceRef       string
-	SourceType      CreateType
+	SourceType      util.CreateType
 	ImageName       string
 	EnvVars         []string
 	Ports           []string
@@ -1004,6 +996,39 @@ func deleteEnvVars(existingEnvs []corev1.EnvVar, envTobeDeleted string) []corev1
 	return retVal
 }
 
+// ApplyComponentConfig applies the component config onto component dc
+// Parameters:
+//	appName: Name of application of which the component is a part
+//	componentName: Name of the component which is being patched with config
+//	componentConfig: Component configuration
+// Returns:
+//	err: Errors if any else nil
+func (c *Client) ApplyComponentConfig(appName string, componentName string, componentConfig config.ComponentSettings) (err error) {
+	// Get DC name from component name and application name
+	namespacedOpenShiftDC, err := util.NamespaceOpenShiftObject(componentName, appName)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create namespaced name")
+	}
+
+	// Fetch DC matching the component details
+	dc, err := c.GetDeploymentConfigFromName(namespacedOpenShiftDC)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get dc for component %s in application %s", componentName, appName)
+	}
+	glog.V(6).Infof("occlient.go#ApplyComponentConfig got dc \n%+v\n", *dc)
+
+	// Prepare expected dc with configs applied
+	applyConfigToDeploymentConfig(componentConfig, dc, namespacedOpenShiftDC, appName)
+
+	glog.V(6).Infof("occlient.go#ApplyComponentConfig generated dc \n%+v\n", *dc)
+	// patch the component's old dc with expected changes
+	err = c.PatchCurrentDC(namespacedOpenShiftDC, *dc, nil)
+	if err != nil {
+		return errors.Wrapf(err, "failed to patch dc of component")
+	}
+	return
+}
+
 // BootstrapSupervisoredS2I uses S2I (Source To Image) to inject Supervisor into the application container.
 // Odo uses https://github.com/ochinchina/supervisord which is pre-built in a ready-to-deploy InitContainer.
 // The supervisord binary is copied over to the application container using a temporary volume and overrides
@@ -1109,7 +1134,7 @@ func (c *Client) BootstrapSupervisoredS2I(params CreateArgs, commonObjectMeta me
 		},
 	)
 
-	if params.SourceType == LOCAL {
+	if params.SourceType == util.LOCAL {
 		inputEnvs = uniqueAppendOrOverwriteEnvVars(
 			inputEnvs,
 			corev1.EnvVar{
@@ -1685,8 +1710,16 @@ func (c *Client) WaitAndGetDC(name string, field string, value string, timeout t
 
 				glog.V(4).Infof("Current annotation: %s=%s", field, e.Annotations[field])
 
+				newDCRolledOut := false
+				for _, s := range e.Status.Conditions {
+					if strings.Contains(s.Message, "successfully rolled out") {
+						newDCRolledOut = true
+						break
+					}
+				}
+
 				// If the annotation has been updated, let's exit
-				if e.Annotations[field] == value {
+				if e.Annotations[field] == value && newDCRolledOut {
 					glog.V(4).Infof("DeploymentConfig %s annotation %s has been updated to %s", name, field, e.Annotations[field])
 					return e, nil
 				}
@@ -2670,10 +2703,13 @@ func (c *Client) GetDeploymentConfigFromName(name string) (*appsv1.DeploymentCon
 	glog.V(4).Infof("Getting DeploymentConfig: %s", name)
 	deploymentConfig, err := c.appsClient.DeploymentConfigs(c.Namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to get DeploymentConfig %s", name)
+		if !strings.Contains(err.Error(), fmt.Sprintf(DEPLOYMENT_CONFIG_NOT_FOUND_ERROR_STR, name)) {
+			return nil, errors.Wrapf(err, "unable to get DeploymentConfig %s", name)
+		} else {
+			return nil, DEPLOYMENT_CONFIG_NOT_FOUND
+		}
 	}
 	return deploymentConfig, nil
-
 }
 
 // GetPVCsFromSelector returns the PVCs based on the given selector

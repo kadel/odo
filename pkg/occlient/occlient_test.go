@@ -3,11 +3,12 @@ package occlient
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/redhat-developer/odo/pkg/testingutil"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/redhat-developer/odo/pkg/testingutil"
 
 	"github.com/pkg/errors"
 
@@ -1654,7 +1655,7 @@ func TestNewAppS2I(t *testing.T) {
 				CreateArgs{
 					Name:       tt.args.commonObjectMeta.Name,
 					SourcePath: tt.args.gitURL,
-					SourceType: GIT,
+					SourceType: util.GIT,
 					ImageName:  tt.args.builderImage,
 					EnvVars:    tt.args.envVars,
 					Ports:      tt.args.inputPorts,
