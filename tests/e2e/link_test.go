@@ -66,6 +66,7 @@ var _ = Describe("odoLinkE2e", func() {
 			runCmdShouldPass("odo service create mysql-persistent")
 
 			out := runCmdShouldPass("oc get serviceinstance -o name")
+			fmt.Println("XXXX")
 			fmt.Println(out)
 			waitForCmdOut("oc get serviceinstance -o name", 1, true, func(output string) bool {
 				return strings.Contains(output, "mysql-persistent")
