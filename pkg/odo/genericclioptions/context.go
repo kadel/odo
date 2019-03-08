@@ -7,6 +7,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/redhat-developer/odo/pkg/application"
 	"github.com/redhat-developer/odo/pkg/component"
+	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/log"
 	"github.com/redhat-developer/odo/pkg/occlient"
 	"github.com/redhat-developer/odo/pkg/odo/util"
@@ -105,24 +106,32 @@ func newContext(command *cobra.Command, createAppIfNeeded bool) *Context {
 	// resolve project
 	ns := resolveProject(command, client)
 
+	// Get details from config file
+	fileName := FlagValueIfSet(command, ContextFlagName)
+	var filePtr *string
+	if fileName != "" {
+		filePtr = &fileName
+	}
+	lci, err := config.NewLocalConfigInfo(filePtr)
+	util.LogErrorAndExit(err, "could not get component settings from config file")
+
 	// resolve application
 	var app string
 	appFlag := FlagValueIfSet(command, ApplicationFlagName)
 	if len(appFlag) > 0 {
-		// if we specified an application via flag, check that it exists and use it
-		_, err := application.Exists(client, appFlag)
-		util.LogErrorAndExit(err, "")
 		app = appFlag
 	} else {
-		var err error
-		if !createAppIfNeeded {
-			// otherwise get the current app (which might not exist)
-			app, err = application.GetCurrent(ns)
+		if lci.ComponentSettings.App != nil {
+			app = *(lci.ComponentSettings.App)
 		} else {
-			// if we asked an app to be created if missing, get the existing one or creating one if needed
-			app, err = application.GetCurrentOrGetCreateSetDefault(client)
+			if createAppIfNeeded {
+				var err error
+				app, err = application.GetDefaultAppName()
+				if err != nil {
+					util.LogErrorAndExit(err, "failed to generate a random app name")
+				}
+			}
 		}
-		util.LogErrorAndExit(err, "unable to get current application")
 	}
 
 	// resolve output flag
@@ -146,9 +155,9 @@ func newContext(command *cobra.Command, createAppIfNeeded bool) *Context {
 	cmpFlag := FlagValueIfSet(command, ComponentFlagName)
 	if len(cmpFlag) == 0 {
 		// retrieve the current component if it exists if we didn't set the component flag
-		var err error
-		cmp, err = component.GetCurrent(app, ns)
-		util.LogErrorAndExit(err, "could not get current component")
+		if lci.ComponentSettings.ComponentName != nil {
+			cmp = *(lci.ComponentSettings.ComponentName)
+		}
 	} else {
 		// if flag is set, check that the specified component exists
 		context.checkComponentExistsOrFail(cmpFlag)

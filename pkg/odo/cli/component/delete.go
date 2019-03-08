@@ -5,7 +5,6 @@ import (
 
 	"github.com/redhat-developer/odo/pkg/odo/genericclioptions"
 
-	"github.com/pkg/errors"
 	"github.com/redhat-developer/odo/pkg/log"
 	appCmd "github.com/redhat-developer/odo/pkg/odo/cli/application"
 	projectCmd "github.com/redhat-developer/odo/pkg/odo/cli/project"
@@ -72,17 +71,6 @@ func (do *DeleteOptions) Run() (err error) {
 			return err
 		}
 		log.Successf("Component %s from application %s has been deleted", do.componentName, do.Application)
-
-		currentComponent, err := component.GetCurrent(do.Application, do.Project)
-		if err != nil {
-			return errors.Wrapf(err, "Unable to get current component")
-		}
-
-		if currentComponent == "" {
-			log.Info("No default component has been set")
-		} else {
-			log.Infof("Default component set to: %s", currentComponent)
-		}
 
 	} else {
 		return fmt.Errorf("Aborting deletion of component: %v", do.componentName)

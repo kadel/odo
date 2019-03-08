@@ -276,81 +276,14 @@ func Delete(client *occlient.Client, componentName string, applicationName strin
 	s := log.Spinnerf("Deleting component %s", componentName)
 	defer s.End(false)
 
-	cfg, err := preference.New()
-	if err != nil {
-		return errors.Wrapf(err, "unable to create new configuration to delete %s", componentName)
-	}
-
 	labels := componentlabels.GetLabels(componentName, applicationName, false)
-	err = client.Delete(labels)
+	err := client.Delete(labels)
 	if err != nil {
 		return errors.Wrapf(err, "error deleting component %s", componentName)
 	}
 
-	// Get a list of all components
-	components, err := List(client, applicationName)
-	if err != nil {
-		return errors.Wrapf(err, "unable to retrieve list of components")
-	}
-
-	// First check is that we want to only update the active component if the component which is getting deleted is the
-	// active component
-	// Second check is that we want to do an update only if it is happening for the active application otherwise we need
-	// not to care for the update of the active component
-	activeComponent := cfg.GetActiveComponent(applicationName, client.Namespace)
-	activeApplication := cfg.GetActiveApplication(client.Namespace)
-	if activeComponent == componentName && activeApplication == applicationName {
-		// We will *only* set a new component if either len(components) is zero, or the
-		// current component matches the one being deleted.
-		if current := cfg.GetActiveComponent(applicationName, client.Namespace); current == componentName || len(components.Items) == 0 {
-
-			// If there's more than one component, set it to the first one..
-			if len(components.Items) > 0 {
-				err = cfg.SetActiveComponent(components.Items[0].Name, applicationName, client.Namespace)
-
-				if err != nil {
-					return errors.Wrapf(err, "unable to set current component to '%s'", componentName)
-				}
-			} else {
-				// Unset to blank
-				err = cfg.UnsetActiveComponent(client.Namespace)
-				if err != nil {
-					return errors.Wrapf(err, "error unsetting current component while deleting %s", componentName)
-				}
-			}
-		}
-
-	}
-
 	s.End(true)
 	return nil
-}
-
-// SetCurrent sets the given componentName as active component
-func SetCurrent(componentName string, applicationName string, projectName string) error {
-	cfg, err := preference.New()
-	if err != nil {
-		return errors.Wrapf(err, "unable to set current component %s", componentName)
-	}
-
-	err = cfg.SetActiveComponent(componentName, applicationName, projectName)
-	if err != nil {
-		return errors.Wrapf(err, "unable to set current component %s", componentName)
-	}
-
-	return nil
-}
-
-// GetCurrent component in active application
-// returns "" if there is no active component
-func GetCurrent(applicationName string, projectName string) (string, error) {
-	cfg, err := preference.New()
-	if err != nil {
-		return "", errors.Wrap(err, "unable to get config")
-	}
-	currentComponent := cfg.GetActiveComponent(applicationName, projectName)
-
-	return currentComponent, nil
 }
 
 // getEnvFromPodEnvs loops through the passed slice of pod#EnvVars and gets the value corresponding to the key passed, returns empty stirng if not available
@@ -716,7 +649,10 @@ func GetComponentType(client *occlient.Client, componentName string, application
 // List lists components in active application
 func List(client *occlient.Client, applicationName string) (ComponentList, error) {
 
-	applicationSelector := fmt.Sprintf("%s=%s", applabels.ApplicationLabel, applicationName)
+	var applicationSelector string
+	if applicationName != "" {
+		applicationSelector = fmt.Sprintf("%s=%s", applabels.ApplicationLabel, applicationName)
+	}
 
 	// retrieve all the deployment configs that are associated with this application
 	dcList, err := client.GetDeploymentConfigsFromSelector(applicationSelector)
@@ -1003,14 +939,11 @@ func GetComponent(client *occlient.Client, componentName string, applicationName
 		}
 	}
 
-	currCompo, _ := GetCurrent(applicationName, projectName)
-
 	component = getMachineReadableFormat(componentName, componentType)
 	component.Spec.Source = path
 	component.Spec.URL = urls
 	component.Spec.Storage = storage
 	component.Spec.Env = filteredEnv
-	component.Status.Active = currCompo == componentName
 	component.Status.LinkedComponents = linkedComponents
 	component.Status.LinkedServices = linkedServices
 
