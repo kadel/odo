@@ -2676,9 +2676,17 @@ func (c *Client) getVolumeNamesFromPVC(pvc string, dc *appsv1.DeploymentConfig) 
 // GetDeploymentConfigsFromSelector returns an array of Deployment Config
 // resources which match the given selector
 func (c *Client) GetDeploymentConfigsFromSelector(selector string) ([]appsv1.DeploymentConfig, error) {
-	dcList, err := c.appsClient.DeploymentConfigs(c.Namespace).List(metav1.ListOptions{
-		LabelSelector: selector,
-	})
+	var dcList *appsv1.DeploymentConfigList
+	var err error
+	if selector != "" {
+		dcList, err = c.appsClient.DeploymentConfigs(c.Namespace).List(metav1.ListOptions{
+			LabelSelector: selector,
+		})
+	} else {
+		dcList, err = c.appsClient.DeploymentConfigs(c.Namespace).List(metav1.ListOptions{
+			FieldSelector: fields.Set{"metadata.namespace": c.Namespace}.AsSelector().String(),
+		})
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to list DeploymentConfigs")
 	}

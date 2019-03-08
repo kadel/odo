@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"text/tabwriter"
 
+	"github.com/golang/glog"
 	"github.com/redhat-developer/odo/pkg/component"
 	"github.com/redhat-developer/odo/pkg/log"
 	appCmd "github.com/redhat-developer/odo/pkg/odo/cli/application"
@@ -56,6 +57,7 @@ func (lo *ListOptions) Run() (err error) {
 	if err != nil {
 		return errors.Wrapf(err, "failed to fetch components list")
 	}
+	glog.V(4).Infof("the components are %+v", components)
 
 	if lo.outputFlag == "json" {
 

@@ -3,7 +3,6 @@ package component
 import (
 	"fmt"
 
-	"github.com/redhat-developer/odo/pkg/application"
 	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/occlient"
 	"github.com/redhat-developer/odo/pkg/odo/genericclioptions"
@@ -67,23 +66,16 @@ func NewPushOptions() *PushOptions {
 func (po *PushOptions) Complete(name string, cmd *cobra.Command, args []string) (err error) {
 	po.client = genericclioptions.Client(cmd)
 
+	var contextFlag *string
 	if len(po.componentContext) > 0 {
-		err = po.localConfig.GetLocalConfigFileFromPath(po.componentContext)
-		if err != nil {
-			return errors.Wrapf(err, "failed to access component config from %+v", po.componentContext)
-		}
-
-		err = po.localConfig.Loadconfig()
-		if err != nil {
-			return errors.Wrapf(err, "failed to load compoennt settings from %s", po.componentContext)
-		}
-	} else {
-		conf, err := config.NewLocalConfigInfo()
-		if err != nil {
-			return errors.Wrap(err, "failed to fetch component config")
-		}
-		po.localConfig = conf
+		contextFlag = &(po.componentContext)
 	}
+
+	conf, err := config.NewLocalConfigInfo(contextFlag)
+	if err != nil {
+		return errors.Wrap(err, "failed to fetch component config")
+	}
+	po.localConfig = conf
 
 	if _, err = os.Stat(po.localConfig.Filename); err != nil {
 		return errors.Wrapf(err, "failed trying to read config file in %s", po.localConfig.Filename)
@@ -130,8 +122,8 @@ func (po *PushOptions) Complete(name string, cmd *cobra.Command, args []string) 
 // Validate validates the push parameters
 func (po *PushOptions) Validate() (err error) {
 	// if the componentName is blank then there is no active component set
-	if len(*(po.localConfig.ComponentSettings.ComponentName)) == 0 {
-		return fmt.Errorf("no component is set as active. Use 'odo component set' to set an active component")
+	if (po.localConfig.ComponentSettings.ComponentName == nil) && len(*(po.localConfig.ComponentSettings.ComponentName)) == 0 {
+		return fmt.Errorf("no component is set in component config. Use 'odo config set ComponentName <component_name>'")
 	}
 
 	return
@@ -158,45 +150,7 @@ func (po *PushOptions) Run() (err error) {
 		}
 		log.Successf("Successfully created project %s", *(po.localConfig.ComponentSettings.Project))
 	}
-	if currPrj := project.GetCurrent(po.client); currPrj != *(po.localConfig.ComponentSettings.Project) {
-		glog.V(4).Infof("Current project is %s", *(po.localConfig.ComponentSettings.Project))
-		log.Namef("Setting %s as current project", *(po.localConfig.ComponentSettings.Project))
-		err = project.SetCurrent(po.client, *(po.localConfig.ComponentSettings.Project))
-		if err != nil {
-			log.Errorf("failed to set %s as active project", *(po.localConfig.ComponentSettings.Project))
-			return errors.Wrapf(err, "failed to set project %s as current", *(po.localConfig.ComponentSettings.Project))
-		}
-		log.Successf("Successfully set %s as active project", *(po.localConfig.ComponentSettings.Project))
-		glog.V(4).Infof("Set %s as current project", *(po.localConfig.ComponentSettings.Project))
-		po.Context.Project = *(po.localConfig.ComponentSettings.Project)
-	}
-
-	isAppExists, err := application.Exists(po.client, *(po.localConfig.ComponentSettings.App))
-	if err != nil {
-		return errors.Wrapf(err, "failed checking for existence of app %s", *(po.localConfig.ComponentSettings.App))
-	}
-	if !isAppExists {
-		log.Namef("Creating application %s", *(po.localConfig.ComponentSettings.App))
-		err = application.Create(po.client, *(po.localConfig.ComponentSettings.App))
-		if err != nil {
-			log.Errorf("Failed creating application %s", *(po.localConfig.ComponentSettings.App))
-			return errors.Wrapf(err, "failed creating app %s in project %s", *(po.localConfig.ComponentSettings.App), *(po.localConfig.ComponentSettings.Project))
-		}
-		log.Successf("Successfully created application %s", *(po.localConfig.ComponentSettings.App))
-		po.Context.Application = *(po.localConfig.ComponentSettings.App)
-	}
-	currApp, err := application.GetCurrent(*(po.localConfig.ComponentSettings.Project))
-	if err != nil {
-		return errors.Wrap(err, "failed to get current application")
-	}
-	if currApp != *(po.localConfig.ComponentSettings.App) {
-		log.Namef("Setting %s as active application", *(po.localConfig.ComponentSettings.App))
-		if err = application.SetCurrent(po.client, *(po.localConfig.ComponentSettings.App)); err != nil {
-			log.Errorf("Failed to set %s as active application", *(po.localConfig.ComponentSettings.App))
-			return errors.Wrapf(err, "failed to set %s application as current", *(po.localConfig.ComponentSettings.App))
-		}
-		log.Successf("Successfully set %s as active application", *(po.localConfig.ComponentSettings.App))
-	}
+	po.client.Namespace = *(po.localConfig.ComponentSettings.Project)
 
 	isCmpExists, err := component.Exists(po.client, *(po.localConfig.ComponentSettings.ComponentName), *(po.localConfig.ComponentSettings.App))
 	if err != nil {
@@ -213,10 +167,6 @@ func (po *PushOptions) Run() (err error) {
 		log.Successf("Successfully created component %s", *(po.localConfig.ComponentSettings.ComponentName))
 		// after component is successfully created, set it as active
 		log.Namef("Setting component %s as active", *(po.localConfig.ComponentSettings.ComponentName))
-
-		if err = component.SetCurrent(*(po.localConfig.ComponentSettings.ComponentName), *(po.localConfig.ComponentSettings.App), *(po.localConfig.ComponentSettings.Project)); err != nil {
-			return errors.Wrapf(err, "failed to set %s as current component", *(po.localConfig.ComponentSettings.ComponentName))
-		}
 		log.Successf("Component '%s' is now set as active component", *(po.localConfig.ComponentSettings.ComponentName))
 
 	} else {

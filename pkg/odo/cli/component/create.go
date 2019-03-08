@@ -110,13 +110,6 @@ func NewCreateOptions() *CreateOptions {
 
 func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 
-	if len(co.componentContext) != 0 {
-		err = co.localConfig.GetLocalConfigFileFromPath(co.componentContext)
-		if err != nil {
-			return errors.Wrap(err, "failed intialising component config file")
-		}
-	}
-
 	componentCnt := 0
 	localSrcCmp := string(util.LOCAL)
 	co.localConfig.ComponentSettings.Type = &localSrcCmp
@@ -230,7 +223,12 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 		co.interactive = true
 	}
 
-	co.localConfig, err = config.NewLocalConfigInfo()
+	var context *string
+	if len(co.componentContext) > 0 {
+		context = &co.componentContext
+	}
+
+	co.localConfig, err = config.NewLocalConfigInfo(context)
 	if err != nil {
 		return errors.Wrap(err, "failed intiating local config")
 	}
