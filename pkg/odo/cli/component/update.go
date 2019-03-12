@@ -115,12 +115,12 @@ func (uo *UpdateOptions) Validate() (err error) {
 func (uo *UpdateOptions) Run() (err error) {
 	stdout := color.Output
 
-	if *(uo.cmpConfig.Type) == string(util.GIT) {
+	if *(uo.cmpConfig.SourceType) == string(util.GIT) {
 		if err := component.Update(uo.Context.Client, uo.cmpConfig, *(uo.cmpConfig.Path), stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully", uo.componentName)
-	} else if *(uo.cmpConfig.Type) == string(util.LOCAL) {
+	} else if *(uo.cmpConfig.SourceType) == string(util.LOCAL) {
 		var cmpPath string
 		if len(uo.cmpCfgContext) > 0 {
 			cmpPath = uo.cmpCfgContext
@@ -142,7 +142,7 @@ func (uo *UpdateOptions) Run() (err error) {
 			return err
 		}
 		log.Successf("The component %s was updated successfully, please use 'odo push' to push your local changes", uo.componentName)
-	} else if *(uo.cmpConfig.Type) == string(util.BINARY) {
+	} else if *(uo.cmpConfig.SourceType) == string(util.BINARY) {
 		path, err := pkgUtil.GetAbsPath(uo.binary)
 		if err != nil {
 			return err

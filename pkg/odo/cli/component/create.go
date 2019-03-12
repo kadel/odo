@@ -112,7 +112,7 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 
 	componentCnt := 0
 	localSrcCmp := string(util.LOCAL)
-	co.localConfig.ComponentSettings.Type = &localSrcCmp
+	co.localConfig.ComponentSettings.SourceType = &localSrcCmp
 
 	if len(co.componentBinary) != 0 {
 		cPath, err := util.GetAbsPath(co.componentBinary)
@@ -121,13 +121,13 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 		}
 		co.localConfig.ComponentSettings.Path = &cPath
 		binarySrcCmp := string(util.BINARY)
-		co.localConfig.ComponentSettings.Type = &binarySrcCmp
+		co.localConfig.ComponentSettings.SourceType = &binarySrcCmp
 		componentCnt++
 	}
 	if len(co.componentGit) != 0 {
 		co.localConfig.ComponentSettings.Path = &(co.componentGit)
 		gitSrcCmp := string(util.GIT)
-		co.localConfig.ComponentSettings.Type = &gitSrcCmp
+		co.localConfig.ComponentSettings.SourceType = &gitSrcCmp
 		componentCnt++
 	}
 
@@ -155,7 +155,7 @@ func (co *CreateOptions) setCmpName(args []string) (err error) {
 		return
 	}
 
-	cmpSrcType, err := util.GetCreateType(*(co.localConfig.ComponentSettings.Type))
+	cmpSrcType, err := util.GetCreateType(*(co.localConfig.ComponentSettings.SourceType))
 	if err != nil {
 		return errors.Wrap(err, "failed to generate a name for component")
 	}
@@ -251,7 +251,7 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 
 		selectedSourceType := ui.SelectSourceType([]util.CreateType{util.LOCAL, util.GIT, util.BINARY})
 		componentSrcType := string(selectedSourceType)
-		co.localConfig.ComponentSettings.Type = &componentSrcType
+		co.localConfig.ComponentSettings.SourceType = &componentSrcType
 		selectedSourcePath := ""
 		currentDirectory, err := os.Getwd()
 		if err != nil {
@@ -397,12 +397,13 @@ func (co *CreateOptions) Run() (err error) {
 	if co.localConfig.ComponentSettings.Ref != nil {
 		err = co.localConfig.SetConfiguration("Ref", *(co.localConfig.ComponentSettings.Ref))
 	}
-	if co.localConfig.ComponentSettings.Type != nil {
-		err = co.localConfig.SetConfiguration("Type", *(co.localConfig.ComponentSettings.Type))
+	if co.localConfig.ComponentSettings.SourceType != nil {
+		err = co.localConfig.SetConfiguration("Type", *(co.localConfig.ComponentSettings.SourceType))
 	}
 	if co.localConfig.ComponentSettings.Project != nil {
 		err = co.localConfig.SetConfiguration("Project", *(co.localConfig.ComponentSettings.Project))
 	}
+	log.Infof("Please use `odo push` command to create the component with source deployed")
 	return
 }
 
@@ -437,7 +438,7 @@ func NewCmdCreate(name, fullName string) *cobra.Command {
 	componentCreateCmd.Flags().StringVarP(&co.componentBinary, "binary", "b", "", "Use a binary as the source file for the component")
 	componentCreateCmd.Flags().StringVarP(&co.componentGit, "git", "g", "", "Use a git repository as the source file for the component")
 	componentCreateCmd.Flags().StringVarP(&co.componentGitRef, "ref", "r", "", "Use a specific ref e.g. commit, branch or tag of the git repository")
-	componentCreateCmd.Flags().StringVar(&co.componentContext, "context", "", "Use local directory as a source file for the component")
+	componentCreateCmd.Flags().StringVar(&co.componentContext, "context", "", "Use context to indicate the path where the component settings need to be saved and this directory should contain component source for local and binary components")
 	componentCreateCmd.Flags().StringVar(&co.memory, "memory", "", "Amount of memory to be allocated to the component. ex. 100Mi")
 	componentCreateCmd.Flags().StringVar(&co.memoryMin, "min-memory", "", "Limit minimum amount of memory to be allocated to the component. ex. 100Mi")
 	componentCreateCmd.Flags().StringVar(&co.memoryMax, "max-memory", "", "Limit maximum amount of memory to be allocated to the component. ex. 100Mi")
