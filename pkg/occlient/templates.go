@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/golang/glog"
 	appsv1 "github.com/openshift/api/apps/v1"
 	buildv1 "github.com/openshift/api/build/v1"
 	componentlabels "github.com/redhat-developer/odo/pkg/component/labels"
@@ -21,16 +22,7 @@ type CommonImageMeta struct {
 	Ports     []corev1.ContainerPort
 }
 
-func applyConfigToDeploymentConfig(componentConfig config.ComponentSettings, dc *appsv1.DeploymentConfig, namespacedDCName string, appName string) {
-
-	componentName := ""
-	if componentConfig.ComponentName != nil {
-		componentName = *(componentConfig.ComponentName)
-	} else {
-		// extract component name from dc
-		componentName = dc.ObjectMeta.Labels[componentlabels.ComponentLabel]
-	}
-
+func getComponentType(dc *appsv1.DeploymentConfig, componentConfig config.ComponentSettings) string {
 	// Get Image params from existing dc
 	// ToDo: Add image details to config
 	triggers := dc.Spec.Triggers
@@ -47,63 +39,84 @@ func applyConfigToDeploymentConfig(componentConfig config.ComponentSettings, dc 
 	if componentConfig.ComponentType != nil {
 		componentType = *(componentConfig.ComponentType)
 	} else {
-		componentType = strings.Split(imageName, ":")[0]
+		componentType = fmt.Sprintf("%s/%s", imageNS, imageName)
 	}
 
-	// Retrieve labels
-	// Save component type as label
-	labels := componentlabels.GetLabels(componentName, appName, true)
-	labels[componentlabels.ComponentTypeLabel] = componentType
-	// ToDo(@anmolbabu): Add logic to persist and here, fetch component version
-	labels[componentlabels.ComponentTypeVersion] = dc.ObjectMeta.Labels[componentlabels.ComponentTypeVersion] //imageTag
-
-	// ObjectMetadata are the same for all generated objects
-	// Create common metadata that will be updated throughout all objects.
-	commonObjectMeta := metav1.ObjectMeta{
-		Name:   namespacedDCName,
-		Labels: labels,
-		// ToDo(@anmolbabu): Create annotations
-		Annotations: dc.ObjectMeta.Annotations,
-	}
-
-	// Gather the common image data into one struct
-	commonImageMeta := CommonImageMeta{
-		Name:      labels[componentlabels.ComponentTypeLabel],
-		Tag:       labels[componentlabels.ComponentTypeVersion],
-		Namespace: imageNS,
-		Ports:     dc.Spec.Template.Spec.Containers[0].Ports,
-	}
-
-	resourceReqs := []util.ResourceRequirementInfo{}
-	var resourceRequirements *corev1.ResourceRequirements
-	if componentConfig.MinCPU != nil && componentConfig.MaxCPU != nil {
-		cpuResourceConstraints := util.FetchResourceQuantity(corev1.ResourceCPU, *componentConfig.MinCPU, *componentConfig.MaxCPU, "")
-		resourceReqs = append(resourceReqs, *cpuResourceConstraints)
-	}
-	if componentConfig.MinMemory != nil && componentConfig.MaxMemory != nil {
-		memoryResourceConstraints := util.FetchResourceQuantity(corev1.ResourceMemory, *componentConfig.MinMemory, *componentConfig.MaxMemory, "")
-		resourceReqs = append(resourceReqs, *memoryResourceConstraints)
-	}
-	if len(resourceReqs) > 0 {
-		resourceRequirements = getResourceRequirementsFromRawData(resourceReqs)
-	}
-
-	*dc = generateSupervisordDeploymentConfig(
-		commonObjectMeta,
-		fmt.Sprintf("%s:%s", labels[componentlabels.ComponentTypeLabel], labels[componentlabels.ComponentTypeVersion]),
-		commonImageMeta,
-		dc.Spec.Template.Spec.Containers[0].Env,
-		dc.Spec.Template.Spec.Containers[0].EnvFrom,
-		resourceRequirements,
-	)
-
-	// Add the appropriate bootstrap volumes for SupervisorD
-	addBootstrapVolumeCopyInitContainer(dc, commonObjectMeta.Name)
-	addBootstrapSupervisordInitContainer(dc, commonObjectMeta.Name)
+	return componentType
 }
 
-func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, builderImage string, commonImageMeta CommonImageMeta,
+func getComponentBuilderDetails(dc *appsv1.DeploymentConfig) (imageNS string, imageVersionedName string) {
+	triggers := dc.Spec.Triggers
+	for _, trigger := range triggers {
+		if trigger.Type == "ImageChange" {
+			imageNS = trigger.ImageChangeParams.From.Namespace
+			imageVersionedName = trigger.ImageChangeParams.From.Name
+		}
+	}
+	return imageNS, imageVersionedName
+}
+
+func resolveComponentType(imageName string) string {
+	// Resolve default namespace for image
+	if !strings.Contains(imageName, "/") {
+		imageName = fmt.Sprintf("openshift/%s", imageName)
+	}
+	// Resolve default version
+	if !strings.Contains(imageName, ":") {
+		imageName = fmt.Sprintf("%s:latest", imageName)
+	}
+	return imageName
+}
+
+func isDCRolledOut(dc *appsv1.DeploymentConfig) bool {
+	for _, cond := range dc.Status.Conditions {
+		if strings.Contains(cond.Message, "rolled out") {
+			return true
+		}
+	}
+	return false
+}
+
+func isConfigApplied(componentConfig config.ComponentSettings, dc *appsv1.DeploymentConfig) (isConfApplied bool) {
+	/*
+		TODO: Add checks for updation of:
+		* ref
+		* ports
+		* path
+	*/
+	cmpBuilderImgNS, cmpBuilderImgVersionedName := getComponentBuilderDetails(dc)
+	cmpContainer, err := FindContainer(dc.Spec.Template.Spec.Containers, dc.Name)
+	if err != nil {
+		glog.V(4).Infof("Container with name %s not found in passed dc", dc.Name)
+		return false
+	}
+	isConfApplied = (
+	// TODO: Use the  label exported in pkg/application/labels/labels.go but defer it for now so as to defer the cyclic dependency to a new PR
+	dc.Labels["app.kubernetes.io/name"] == *(componentConfig.App) &&
+		fmt.Sprintf("%s/%s", cmpBuilderImgNS, cmpBuilderImgVersionedName) == resolveComponentType(*(componentConfig.ComponentType)) &&
+		dc.Labels[componentlabels.ComponentLabel] == *(componentConfig.ComponentName) &&
+		dc.Namespace == *(componentConfig.Project) &&
+		// TODO: Use the  label exported in pkg/component/component.go but defer it for now so as to defer the cyclic dependency to a new PR
+		dc.Annotations["app.kubernetes.io/component-source-type"] == *(componentConfig.Type))
+	if (componentConfig.MinCPU != nil) && (componentConfig.MaxCPU != nil) {
+		cpuExpected := util.FetchResourceQuantity(corev1.ResourceCPU, *(componentConfig.MinCPU), *(componentConfig.MaxCPU), "")
+		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Cpu().Cmp(cpuExpected.MaxQty) == 0)
+		isConfApplied = isConfApplied && (cmpContainer.Resources.Requests.Cpu().Cmp(cpuExpected.MinQty) == 0)
+	}
+	if (componentConfig.MinMemory != nil) && (componentConfig.MaxMemory != nil) {
+		memoryExpected := util.FetchResourceQuantity(corev1.ResourceMemory, *(componentConfig.MinMemory), *(componentConfig.MaxMemory), "")
+		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Memory().Cmp(memoryExpected.MaxQty) == 0)
+		isConfApplied = isConfApplied && (cmpContainer.Resources.Requests.Memory().Cmp(memoryExpected.MinQty) == 0)
+	}
+	return
+}
+
+func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta,
 	envVar []corev1.EnvVar, envFrom []corev1.EnvFromSource, resourceRequirements *corev1.ResourceRequirements) appsv1.DeploymentConfig {
+
+	if commonImageMeta.Namespace == "" {
+		commonImageMeta.Namespace = "openshift"
+	}
 
 	// Generates and deploys a DeploymentConfig with an InitContainer to copy over the SupervisorD binary.
 	dc := appsv1.DeploymentConfig{
@@ -130,7 +143,7 @@ func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, bui
 					// The application container
 					Containers: []corev1.Container{
 						{
-							Image: builderImage,
+							Image: fmt.Sprintf("%s/%s:%s", commonImageMeta.Namespace, commonImageMeta.Name, commonImageMeta.Tag),
 							Name:  commonObjectMeta.Name,
 							Ports: commonImageMeta.Ports,
 							// Run the actual supervisord binary that has been mounted into the container
@@ -207,8 +220,24 @@ func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, bui
 	return dc
 }
 
-func fetchContainerResourceLimits(container corev1.Container) corev1.ResourceRequirements {
+func FetchContainerResourceLimits(container corev1.Container) corev1.ResourceRequirements {
 	return container.Resources
+}
+
+func GetResourceRequirementsFromCmpSettings(cfg config.ComponentSettings) *corev1.ResourceRequirements {
+	var resReq []util.ResourceRequirementInfo
+	if (cfg.MinCPU != nil) && (cfg.MaxCPU) != nil {
+		cpuReq := util.FetchResourceQuantity(corev1.ResourceCPU, *(cfg.MinCPU), *(cfg.MaxCPU), "")
+		resReq = append(resReq, *cpuReq)
+	}
+	if (cfg.MinMemory != nil) && (cfg.MaxMemory != nil) {
+		memReq := util.FetchResourceQuantity(corev1.ResourceMemory, *(cfg.MinMemory), *(cfg.MaxMemory), "")
+		resReq = append(resReq, *memReq)
+	}
+	if len(resReq) == 0 {
+		return nil
+	}
+	return getResourceRequirementsFromRawData(resReq)
 }
 
 func getResourceRequirementsFromRawData(resources []util.ResourceRequirementInfo) *corev1.ResourceRequirements {
