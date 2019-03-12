@@ -352,7 +352,7 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 		ImageName:       *(componentConfig.ComponentType),
 		ApplicationName: *(componentConfig.App),
 	}
-	createArgs.SourceType, err = util.GetCreateType(*(componentConfig.Type))
+	createArgs.SourceType, err = util.GetCreateType(*(componentConfig.SourceType))
 	if err != nil {
 		return errors.Wrapf(err, "failed to create component with config %+v", componentConfig)
 	}
@@ -371,7 +371,7 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 			*(util.FetchResourceQuantity(corev1.ResourceMemory, *(componentConfig.MinMemory), *(componentConfig.MaxMemory), "")),
 		)
 	}
-	switch *(componentConfig.Type) {
+	switch *(componentConfig.SourceType) {
 	case string(util.GIT):
 		// Use Git
 		if componentConfig.Ref != nil {
@@ -444,12 +444,12 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 // Returns:
 //	err: Errors if any else nil
 func ApplyConfig(client *occlient.Client, componentConfig config.ComponentSettings, context string, stdout io.Writer) (err error) {
-	if *(componentConfig.Type) == string(util.GIT) {
+	if *(componentConfig.SourceType) == string(util.GIT) {
 		if err := Update(client, componentConfig, *(componentConfig.Path), stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully", *(componentConfig.ComponentName))
-	} else if *(componentConfig.Type) == string(util.LOCAL) {
+	} else if *(componentConfig.SourceType) == string(util.LOCAL) {
 		var cmpPath string
 		if len(context) > 0 {
 			cmpPath = context
@@ -471,7 +471,7 @@ func ApplyConfig(client *occlient.Client, componentConfig config.ComponentSettin
 			return err
 		}
 		log.Successf("The component %s was updated successfully", *(componentConfig.ComponentName))
-	} else if *(componentConfig.Type) == string(util.BINARY) {
+	} else if *(componentConfig.SourceType) == string(util.BINARY) {
 		path, err := pkgUtil.GetAbsPath(*(componentConfig.Path))
 		if err != nil {
 			return err
@@ -741,7 +741,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 
 	componentName := *(componentSettings.ComponentName)
 	applicationName := *(componentSettings.App)
-	newSourceType := *(componentSettings.Type)
+	newSourceType := *(componentSettings.SourceType)
 
 	var newSourceRef string
 	if componentSettings.Ref != nil {

@@ -2,6 +2,7 @@ package component
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/occlient"
@@ -81,7 +82,7 @@ func (po *PushOptions) Complete(name string, cmd *cobra.Command, args []string) 
 		return errors.Wrapf(err, "failed trying to read config file in %s", po.localConfig.Filename)
 	}
 
-	po.sourceType = *(po.localConfig.ComponentSettings.Type)
+	po.sourceType = *(po.localConfig.ComponentSettings.SourceType)
 	if po.sourceType == string(util.LOCAL) {
 		if len(po.componentContext) != 0 {
 			po.sourcePath = util.GenFileURL(po.componentContext, runtime.GOOS)
@@ -129,16 +130,13 @@ func (po *PushOptions) Validate() (err error) {
 	return
 }
 
-// Run has the logic to perform the required actions as part of command
-func (po *PushOptions) Run() (err error) {
-	stdout := color.Output
-
+func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
 	isPrjExists, err := project.Exists(po.client, *(po.localConfig.ComponentSettings.Project))
 	if err != nil {
 		return errors.Wrapf(err, "failed to check if project with name %s exists", *(po.localConfig.ComponentSettings.Project))
 	}
 	if !isPrjExists {
-		log.Namef("Creating project %s", *(po.localConfig.ComponentSettings.Project))
+		log.Successf("Creating project %s", *(po.localConfig.ComponentSettings.Project))
 		err = project.Create(po.client, *(po.localConfig.ComponentSettings.Project), true)
 		if err != nil {
 			log.Errorf("Failed creating project %s", *(po.localConfig.ComponentSettings.Project))
@@ -158,7 +156,7 @@ func (po *PushOptions) Run() (err error) {
 	}
 
 	if !isCmpExists {
-		log.Namef("Creating %s component with name %s", *(po.localConfig.ComponentSettings.ComponentType), *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Creating %s component with name %s", *(po.localConfig.ComponentSettings.ComponentType), *(po.localConfig.ComponentSettings.ComponentName))
 		// Classic case of component creation
 		if err = component.CreateComponent(po.client, po.localConfig.ComponentSettings, po.componentContext, stdout); err != nil {
 			log.Errorf("Failed to create component with settings %+v", po.localConfig.ComponentSettings)
@@ -166,11 +164,11 @@ func (po *PushOptions) Run() (err error) {
 		}
 		log.Successf("Successfully created component %s", *(po.localConfig.ComponentSettings.ComponentName))
 		// after component is successfully created, set it as active
-		log.Namef("Setting component %s as active", *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Setting component %s as active", *(po.localConfig.ComponentSettings.ComponentName))
 		log.Successf("Component '%s' is now set as active component", *(po.localConfig.ComponentSettings.ComponentName))
 
 	} else {
-		log.Namef("Applying component settings %+v to component: %v", po.localConfig, *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Applying component settings %+v to component: %v", po.localConfig, *(po.localConfig.ComponentSettings.ComponentName))
 		// Apply config
 		err = component.ApplyConfig(po.client, po.localConfig.ComponentSettings, po.componentContext, stdout)
 		if err != nil {
@@ -179,8 +177,19 @@ func (po *PushOptions) Run() (err error) {
 		}
 		log.Successf("Successfully applied component settings %+v to component: %v", po.localConfig.ComponentSettings, *(po.localConfig.ComponentSettings.ComponentName))
 	}
+	return nil
+}
 
-	log.Namef("Pushing changes to component: %v of type %s", *(po.localConfig.ComponentSettings.ComponentName), po.sourceType)
+// Run has the logic to perform the required actions as part of command
+func (po *PushOptions) Run() (err error) {
+	stdout := color.Output
+
+	err = po.createCmpIfNotExists(stdout)
+	if err != nil {
+		return
+	}
+
+	log.Successf("Pushing changes to component: %v of type %s", *(po.localConfig.ComponentSettings.ComponentName), po.sourceType)
 
 	switch po.sourceType {
 	case string(util.LOCAL), string(util.BINARY):

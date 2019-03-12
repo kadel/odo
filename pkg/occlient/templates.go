@@ -24,10 +24,8 @@ type CommonImageMeta struct {
 
 func getComponentType(dc *appsv1.DeploymentConfig, componentConfig config.ComponentSettings) string {
 	// Get Image params from existing dc
-	// ToDo: Add image details to config
 	triggers := dc.Spec.Triggers
-	imageNS := ""
-	imageName := ""
+	var imageNS, imageName, componentType string
 	for _, trigger := range triggers {
 		if trigger.Type == "ImageChange" {
 			imageNS = trigger.ImageChangeParams.From.Namespace
@@ -35,7 +33,6 @@ func getComponentType(dc *appsv1.DeploymentConfig, componentConfig config.Compon
 		}
 	}
 
-	componentType := ""
 	if componentConfig.ComponentType != nil {
 		componentType = *(componentConfig.ComponentType)
 	} else {
@@ -97,7 +94,7 @@ func isConfigApplied(componentConfig config.ComponentSettings, dc *appsv1.Deploy
 		dc.Labels[componentlabels.ComponentLabel] == *(componentConfig.ComponentName) &&
 		dc.Namespace == *(componentConfig.Project) &&
 		// TODO: Use the  label exported in pkg/component/component.go but defer it for now so as to defer the cyclic dependency to a new PR
-		dc.Annotations["app.kubernetes.io/component-source-type"] == *(componentConfig.Type))
+		dc.Annotations["app.kubernetes.io/component-source-type"] == *(componentConfig.SourceType))
 	if (componentConfig.MinCPU != nil) && (componentConfig.MaxCPU != nil) {
 		cpuExpected := util.FetchResourceQuantity(corev1.ResourceCPU, *(componentConfig.MinCPU), *(componentConfig.MaxCPU), "")
 		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Cpu().Cmp(cpuExpected.MaxQty) == 0)
