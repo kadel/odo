@@ -12,6 +12,7 @@ import (
 	"github.com/redhat-developer/odo/pkg/occlient"
 	"github.com/redhat-developer/odo/pkg/odo/util"
 	"github.com/redhat-developer/odo/pkg/project"
+	pkgUtil "github.com/redhat-developer/odo/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -80,15 +81,29 @@ func resolveProject(command *cobra.Command, client *occlient.Client) string {
 		util.LogErrorAndExit(err, "")
 		ns = projectFlag
 	} else {
-		// otherwise use the current project
-		ns = project.GetCurrent(client)
-		// if no current project, then check if user is trying to create or delete something other than project
-		if len(ns) <= 0 {
-			errFormat := "Could not get current project. Please create or set a project\n\t%s project create|set <project_name>"
-			checkProjectCreateOrDeleteOnlyOnInvalidNamespace(command, errFormat)
+		// Get details from config file
+		fileName := FlagValueIfSet(command, ContextFlagName)
+		var filePtr *string
+		if fileName != "" {
+			fileAbs, err := pkgUtil.GetAbsPath(fileName)
+			util.LogErrorAndExit(err, "")
+			filePtr = &fileAbs
 		}
+		lci, err := config.NewLocalConfigInfo(filePtr)
+		util.LogErrorAndExit(err, "could not get component settings from config file")
+
+		if lci.ComponentSettings.Project != nil {
+			ns = *(lci.ComponentSettings.Project)
+		} else {
+			ns = project.GetCurrent(client)
+			if len(ns) <= 0 {
+				errFormat := "Could not get current project. Please create or set a project\n\t%s project create|set <project_name>"
+				checkProjectCreateOrDeleteOnlyOnInvalidNamespace(command, errFormat)
+			}
+		}
+
 		// check that the specified project exists
-		_, err := project.Exists(client, ns)
+		_, err = project.Exists(client, ns)
 		if err != nil {
 			e1 := fmt.Sprintf("You dont have permission to project '%s' or it doesnt exist. Please create or set a different project\n\t", ns)
 			errFormat := fmt.Sprint(e1, "%s project create|set <project_name>")
@@ -110,7 +125,9 @@ func newContext(command *cobra.Command, createAppIfNeeded bool) *Context {
 	fileName := FlagValueIfSet(command, ContextFlagName)
 	var filePtr *string
 	if fileName != "" {
-		filePtr = &fileName
+		fAbs, err := pkgUtil.GetAbsPath(fileName)
+		util.LogErrorAndExit(err, "")
+		filePtr = &fAbs
 	}
 	lci, err := config.NewLocalConfigInfo(filePtr)
 	util.LogErrorAndExit(err, "could not get component settings from config file")

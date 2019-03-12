@@ -2,8 +2,12 @@ package component
 
 import (
 	"fmt"
-	"github.com/redhat-developer/odo/pkg/odo/genericclioptions"
 	"os"
+
+	"github.com/pkg/errors"
+	"github.com/redhat-developer/odo/pkg/config"
+	"github.com/redhat-developer/odo/pkg/odo/genericclioptions"
+	"github.com/redhat-developer/odo/pkg/util"
 
 	"github.com/redhat-developer/odo/pkg/odo/util/completion"
 	ktemplates "k8s.io/kubernetes/pkg/kubectl/cmd/templates"
@@ -27,10 +31,12 @@ const UpdateRecommendedCommandName = "update"
 
 // UpdateOptions encapsulates the update command options
 type UpdateOptions struct {
-	binary string
-	git    string
-	local  string
-	ref    string
+	binary        string
+	git           string
+	local         string
+	ref           string
+	cmpCfgContext string
+	cmpConfig     config.ComponentSettings
 	*ComponentOptions
 }
 
@@ -52,12 +58,26 @@ var updateCmdExample = ktemplates.Examples(`  # Change the source code path of a
 
 // NewUpdateOptions returns new instance of UpdateOptions
 func NewUpdateOptions() *UpdateOptions {
-	return &UpdateOptions{"", "", "", "", &ComponentOptions{}}
+	return &UpdateOptions{ComponentOptions: &ComponentOptions{}}
 }
 
 // Complete completes update args
 func (uo *UpdateOptions) Complete(name string, cmd *cobra.Command, args []string) (err error) {
 	err = uo.ComponentOptions.Complete(name, cmd, args)
+	if err != nil {
+		return errors.Wrapf(err, "failed to update component")
+	}
+
+	var cfgFileLoc *string
+	if len(uo.cmpCfgContext) > 0 {
+		cfgFileLoc = &(uo.cmpCfgContext)
+	}
+	lci, err := config.NewLocalConfigInfo(cfgFileLoc)
+	if err != nil {
+		return errors.Wrapf(err, "failed to update component")
+	}
+	uo.cmpConfig = lci.ComponentSettings
+
 	return
 }
 
@@ -95,39 +115,43 @@ func (uo *UpdateOptions) Validate() (err error) {
 func (uo *UpdateOptions) Run() (err error) {
 	stdout := color.Output
 
-	if len(uo.git) != 0 {
-		if err := component.Update(uo.Context.Client, uo.componentName, uo.Context.Application, "git", uo.git, uo.ref, stdout); err != nil {
+	if *(uo.cmpConfig.Type) == string(util.GIT) {
+		if err := component.Update(uo.Context.Client, uo.cmpConfig, *(uo.cmpConfig.Path), stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully", uo.componentName)
-	} else if len(uo.local) != 0 {
-		// we want to use and save absolute path for component
-		dir, err := pkgUtil.GetAbsPath(uo.local)
-		if err != nil {
-			return err
+	} else if *(uo.cmpConfig.Type) == string(util.LOCAL) {
+		var cmpPath string
+		if len(uo.cmpCfgContext) > 0 {
+			cmpPath = uo.cmpCfgContext
+		} else {
+			dir, err := os.Getwd()
+			if err != nil {
+				return errors.Wrapf(err, "failed to update component %s", *(uo.cmpConfig.ComponentName))
+			}
+			cmpPath = dir
 		}
-		fileInfo, err := os.Stat(dir)
+		fileInfo, err := os.Stat(cmpPath)
 		if err != nil {
 			return err
 		}
 		if !fileInfo.IsDir() {
 			return fmt.Errorf("Please provide a path to the directory")
 		}
-		if err = component.Update(uo.Context.Client, uo.componentName, uo.Context.Application, "local", dir, "", stdout); err != nil {
+		if err = component.Update(uo.Context.Client, uo.cmpConfig, cmpPath, stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully, please use 'odo push' to push your local changes", uo.componentName)
-	} else if len(uo.binary) != 0 {
+	} else if *(uo.cmpConfig.Type) == string(util.BINARY) {
 		path, err := pkgUtil.GetAbsPath(uo.binary)
 		if err != nil {
 			return err
 		}
-		if err = component.Update(uo.Context.Client, uo.componentName, uo.Context.Application, "binary", path, "", stdout); err != nil {
+		if err = component.Update(uo.Context.Client, uo.cmpConfig, path, stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully, please use 'odo push' to push your local changes", uo.componentName)
 	}
-
 	return
 }
 
@@ -146,7 +170,7 @@ func NewCmdUpdate(name, fullName string) *cobra.Command {
 		},
 	}
 
-	updateCmd.Flags().StringVarP(&uo.binary, "binary", "b", "", "binary artifact")
+	updateCmd.Flags().StringVarP(&uo.cmpCfgContext, "context", "c", ".", "Use context to specify the location of a component config file if not already in the component source directory")
 	updateCmd.Flags().StringVarP(&uo.git, "git", "g", "", "git source")
 	updateCmd.Flags().StringVarP(&uo.local, "local", "l", "", "Use local directory as a source for component.")
 	updateCmd.Flags().StringVarP(&uo.ref, "ref", "r", "", "Use a specific ref e.g. commit, branch or tag of the git repository")
