@@ -58,7 +58,7 @@ func NewCmdComponent(name, fullName string) *cobra.Command {
 	var componentCmd = &cobra.Command{
 		Use:   name,
 		Short: "Components of an application",
-		Example: fmt.Sprintf("%s\n%s\n\n  See sub-commands individually for more examples, e.g. %s %s -h",
+		Example: fmt.Sprintf("%s\n%s\n\n  See sub-commands individually for more examples",
 			fullName, CreateRecommendedCommandName),
 		// 'odo component' is the same as 'odo component get'
 		// 'odo component <component_name>' is the same as 'odo component set <component_name>'

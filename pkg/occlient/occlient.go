@@ -1336,7 +1336,7 @@ func copyVolumesAndVolumeMounts(dc appsv1.DeploymentConfig, currentDC *appsv1.De
 
 // UpdateDCToGit replaces / updates the current DeplomentConfig with the appropriate
 // generated image from BuildConfig as well as the correct DeploymentConfig triggers for Git.
-func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) (err error) {
+func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) (err error) {
 
 	// Fail if blank
 	if imageName == "" {
@@ -1362,9 +1362,7 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 			commonObjectMeta.Name,
 			dc,
 			nil,
-			func(e *appsv1.DeploymentConfig) bool {
-				return e.Annotations["app.kubernetes.io/component-source-type"] == dc.ObjectMeta.Annotations["app.kubernetes.io/component-source-type"]
-			},
+			dcRollOutWaitCond,
 			existingDC,
 			existingCmpContainer,
 		)
@@ -1392,7 +1390,7 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 // Returns:
 //	errors if any or nil
 // func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, componentImageType string, isToLocal bool) error {
-func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) error {
+func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) error {
 	// Retrieve the namespace of the corresponding component image
 	imageStream, err := c.GetImageStream(commonImageMeta.Namespace, commonImageMeta.Name, commonImageMeta.Tag)
 	if err != nil {
@@ -1482,11 +1480,7 @@ func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, common
 		commonObjectMeta.Name,
 		dc,
 		nil,
-		func(e *appsv1.DeploymentConfig) bool {
-			return (e.Annotations["app.kubernetes.io/component-source-type"] == dc.ObjectMeta.Annotations["app.kubernetes.io/component-source-type"] &&
-				isConfigApplied(componentSettings, e) &&
-				isDCRolledOut(e))
-		},
+		dcRollOutWaitCond,
 		existingDC,
 		existingCmpContainer,
 	)
