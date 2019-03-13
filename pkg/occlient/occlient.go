@@ -1252,7 +1252,8 @@ func (c *Client) UpdateBuildConfig(buildConfigName string, gitURL string, annota
 }
 
 // Define a function that is meant to update a DC in place
-type dcStructUpdater func(dc *appsv1.DeploymentConfig) error
+type dcStructUpdater func(dc *appsv1.DeploymentConfig, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) error
+type dcRollOutWait func(*appsv1.DeploymentConfig) bool
 
 // PatchCurrentDC "patches" the current DeploymentConfig with a new one
 // however... we make sure that configurations such as:
@@ -1262,25 +1263,13 @@ type dcStructUpdater func(dc *appsv1.DeploymentConfig) error
 // if prePatchDCHandler is specified (meaning not nil), then it's applied
 // as the last action before the actual call to the Kubernetes API thus giving us the chance
 // to perform arbitrary updates to a DC before it's finalized for patching
-func (c *Client) PatchCurrentDC(name string, dc appsv1.DeploymentConfig, prePatchDCHandler dcStructUpdater, waitCond func(*appsv1.DeploymentConfig) bool) error {
+func (c *Client) PatchCurrentDC(name string, dc appsv1.DeploymentConfig, prePatchDCHandler dcStructUpdater, waitCond dcRollOutWait, currentDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) error {
 
-	// Retrieve the current DC
-	currentDC, err := c.GetDeploymentConfigFromName(name)
-	if err != nil {
-		return errors.Wrapf(err, "unable to get DeploymentConfig %s", name)
-	}
 	/*
-		// Find the container (don't want to use .Spec.Containers[0] in case the user has modified the DC...)
-		// in order to retrieve what the volumes are
-		foundCurrentDCContainer, err := FindContainer(currentDC.Spec.Template.Spec.Containers, name)
-		if err != nil {
-			return errors.Wrapf(err, "Unable to find current DeploymentConfig container %s", name)
-		}
-
 		copyVolumesAndVolumeMounts(dc, currentDC, foundCurrentDCContainer)
 	*/
 	if prePatchDCHandler != nil {
-		err := prePatchDCHandler(&dc)
+		err := prePatchDCHandler(&dc, currentDC, existingCmpContainer)
 		if err != nil {
 			return errors.Wrapf(err, "Unable to correctly update dc %s using the specified prePatch handler", name)
 		}
@@ -1298,7 +1287,7 @@ func (c *Client) PatchCurrentDC(name string, dc appsv1.DeploymentConfig, prePatc
 	// Update the current one that's deployed with the new Spec.
 	// despite the "patch" function name, we use update since `.Patch` requires
 	// use to define each and every object we must change. Updating makes it easier.
-	_, err = c.appsClient.DeploymentConfigs(c.Namespace).Update(currentDC)
+	_, err := c.appsClient.DeploymentConfigs(c.Namespace).Update(currentDC)
 	if err != nil {
 		return errors.Wrapf(err, "unable to update DeploymentConfig %s", name)
 	}
@@ -1347,7 +1336,7 @@ func copyVolumesAndVolumeMounts(dc appsv1.DeploymentConfig, currentDC *appsv1.De
 
 // UpdateDCToGit replaces / updates the current DeplomentConfig with the appropriate
 // generated image from BuildConfig as well as the correct DeploymentConfig triggers for Git.
-func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool) (err error) {
+func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) (err error) {
 
 	// Fail if blank
 	if imageName == "" {
@@ -1361,10 +1350,12 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 		err = c.PatchCurrentDC(
 			commonObjectMeta.Name,
 			dc,
-			c.removeTracesOfSupervisordFromDC,
+			removeTracesOfSupervisordFromDC,
 			func(e *appsv1.DeploymentConfig) bool {
 				return e.Annotations["app.kubernetes.io/component-source-type"] == dc.ObjectMeta.Annotations["app.kubernetes.io/component-source-type"]
 			},
+			existingDC,
+			existingCmpContainer,
 		)
 	} else {
 		err = c.PatchCurrentDC(
@@ -1374,6 +1365,8 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 			func(e *appsv1.DeploymentConfig) bool {
 				return e.Annotations["app.kubernetes.io/component-source-type"] == dc.ObjectMeta.Annotations["app.kubernetes.io/component-source-type"]
 			},
+			existingDC,
+			existingCmpContainer,
 		)
 	}
 	if err != nil {
@@ -1399,7 +1392,7 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 // Returns:
 //	errors if any or nil
 // func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, componentImageType string, isToLocal bool) error {
-func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool) error {
+func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) error {
 	// Retrieve the namespace of the corresponding component image
 	imageStream, err := c.GetImageStream(commonImageMeta.Namespace, commonImageMeta.Name, commonImageMeta.Tag)
 	if err != nil {
@@ -1476,6 +1469,14 @@ func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, common
 	addBootstrapVolume(&dc, commonObjectMeta.Name)
 	addBootstrapVolumeMount(&dc, commonObjectMeta.Name)
 
+	if isCreatePVC {
+		// Setup PVC
+		_, err = c.CreatePVC(getAppRootVolumeName(commonObjectMeta.Name), "1Gi", commonObjectMeta.Labels)
+		if err != nil {
+			return errors.Wrapf(err, "unable to create PVC for %s", commonObjectMeta.Name)
+		}
+	}
+
 	// Patch the current DC with the new one
 	err = c.PatchCurrentDC(
 		commonObjectMeta.Name,
@@ -1486,17 +1487,11 @@ func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, common
 				isConfigApplied(componentSettings, e) &&
 				isDCRolledOut(e))
 		},
+		existingDC,
+		existingCmpContainer,
 	)
 	if err != nil {
 		return errors.Wrapf(err, "unable to update the current DeploymentConfig %s", commonObjectMeta.Name)
-	}
-
-	if isCreatePVC {
-		// Setup PVC
-		_, err = c.CreatePVC(getAppRootVolumeName(commonObjectMeta.Name), "1Gi", commonObjectMeta.Labels)
-		if err != nil {
-			return errors.Wrapf(err, "unable to create PVC for %s", commonObjectMeta.Name)
-		}
 	}
 
 	return nil
@@ -1551,20 +1546,8 @@ func (c *Client) SetupForSupervisor(dcName string, annotations map[string]string
 
 // removeTracesOfSupervisordFromDC takes a DeploymentConfig and removes any traces of the supervisord from it
 // so it removes things like supervisord volumes, volumes mounts and init containers
-func (c *Client) removeTracesOfSupervisordFromDC(dc *appsv1.DeploymentConfig) error {
+func removeTracesOfSupervisordFromDC(dc *appsv1.DeploymentConfig, currentDC *appsv1.DeploymentConfig, foundCurrentDCContainer corev1.Container) error {
 	dcName := dc.Name
-
-	currentDC, err := c.GetDeploymentConfigFromName(dcName)
-	if err != nil {
-		return errors.Wrapf(err, "unable to get DeploymentConfig %s", dcName)
-	}
-
-	// Find the container (don't want to use .Spec.Containers[0] in case the user has modified the DC...)
-	// in order to retrieve what the volumes are
-	foundCurrentDCContainer, err := FindContainer(currentDC.Spec.Template.Spec.Containers, dcName)
-	if err != nil {
-		return errors.Wrapf(err, "Unable to find current DeploymentConfig container %s", dcName)
-	}
 
 	copyVolumesAndVolumeMounts(*dc, currentDC, foundCurrentDCContainer)
 
