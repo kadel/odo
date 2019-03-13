@@ -65,10 +65,44 @@ func resolveComponentType(imageName string) string {
 	return imageName
 }
 
-func isDCRolledOut(dc *appsv1.DeploymentConfig) bool {
-	for _, cond := range dc.Status.Conditions {
-		if strings.Contains(cond.Message, "rolled out") {
+// getDeploymentCondition returns the condition with the provided type.
+// Borrowed from // Borrowed from https://github.com/openshift/origin/blob/64349ed036ed14808124c5b4d8538b3856783b54/pkg/oc/originpolymorphichelpers/deploymentconfigs/status.go
+func getDeploymentCondition(status appsv1.DeploymentConfigStatus, condType appsv1.DeploymentConditionType) *appsv1.DeploymentCondition {
+	for i := range status.Conditions {
+		c := status.Conditions[i]
+		if c.Type == condType {
+			return &c
+		}
+	}
+	return nil
+}
+
+// isDCRolledOut indicates whether the deployment config is rolled out or not
+// Borrowed from https://github.com/openshift/origin/blob/64349ed036ed14808124c5b4d8538b3856783b54/pkg/oc/originpolymorphichelpers/deploymentconfigs/status.go
+func isDCRolledOut(config *appsv1.DeploymentConfig) bool {
+	cond := getDeploymentCondition(config.Status, appsv1.DeploymentProgressing)
+	if config.Generation <= config.Status.ObservedGeneration {
+		switch {
+		case cond != nil && cond.Reason == "NewReplicationControllerAvailable":
 			return true
+
+		case cond != nil && cond.Reason == "ProgressDeadlineExceeded":
+			return true
+
+		case cond != nil && cond.Reason == "RolloutCancelled":
+			return true
+
+		case cond != nil && cond.Reason == "DeploymentConfigPaused":
+			return true
+
+		case config.Status.UpdatedReplicas < config.Spec.Replicas:
+			return false
+
+		case config.Status.Replicas > config.Status.UpdatedReplicas:
+			return false
+
+		case config.Status.AvailableReplicas < config.Status.UpdatedReplicas:
+			return false
 		}
 	}
 	return false
