@@ -12,6 +12,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/golang/glog"
+	appsv1 "github.com/openshift/api/apps/v1"
 	"github.com/pkg/errors"
 	applabels "github.com/redhat-developer/odo/pkg/application/labels"
 	componentlabels "github.com/redhat-developer/odo/pkg/component/labels"
@@ -853,7 +854,21 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 
 		// Update / replace the current DeploymentConfig with a Git one (not SupervisorD!)
 		glog.V(4).Infof("Updating the DeploymentConfig %s image to %s", namespacedOpenShiftObject, bc.Spec.Output.To.Name)
-		err = client.UpdateDCToGit(commonObjectMeta, bc.Spec.Output.To.Name, commonImageMeta.Ports, componentSettings, resourceLimits, envVars, oldSourceType != string(util.GIT), currentDC, foundCurrentDCContainer)
+		err = client.UpdateDCToGit(
+			commonObjectMeta,
+			bc.Spec.Output.To.Name,
+			commonImageMeta.Ports,
+			componentSettings,
+			resourceLimits,
+			envVars,
+			oldSourceType != string(util.GIT),
+			currentDC,
+			foundCurrentDCContainer,
+			func(e *appsv1.DeploymentConfig) bool {
+				return occlient.IsConfigApplied(componentSettings, e) &&
+					occlient.IsDCRolledOut(e)
+			},
+		)
 		if err != nil {
 			return errors.Wrapf(err, "unable to update DeploymentConfig image for %s component", componentName)
 		}
@@ -879,7 +894,21 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 		}
 
 		// Update the DeploymentConfig
-		err = client.UpdateDCToSupervisor(commonObjectMeta, commonImageMeta, componentSettings, resourceLimits, envVars, true, true, currentDC, foundCurrentDCContainer)
+		err = client.UpdateDCToSupervisor(
+			commonObjectMeta,
+			commonImageMeta,
+			componentSettings,
+			resourceLimits,
+			envVars,
+			true,
+			true,
+			currentDC,
+			foundCurrentDCContainer,
+			func(e *appsv1.DeploymentConfig) bool {
+				return (occlient.IsConfigApplied(componentSettings, e) &&
+					occlient.IsDCRolledOut(e))
+			},
+		)
 		if err != nil {
 			return errors.Wrapf(err, "unable to update DeploymentConfig for %s component", componentName)
 		}
@@ -903,7 +932,21 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 
 			// Update the current DeploymentConfig with all config applied
 			glog.V(4).Infof("Updating the DeploymentConfig %s image to %s", namespacedOpenShiftObject, bc.Spec.Output.To.Name)
-			err = client.UpdateDCToGit(commonObjectMeta, bc.Spec.Output.To.Name, commonImageMeta.Ports, componentSettings, resourceLimits, envVars, oldSourceType != string(util.GIT), currentDC, foundCurrentDCContainer)
+			err = client.UpdateDCToGit(
+				commonObjectMeta,
+				bc.Spec.Output.To.Name,
+				commonImageMeta.Ports,
+				componentSettings,
+				resourceLimits,
+				envVars,
+				oldSourceType != string(util.GIT),
+				currentDC,
+				foundCurrentDCContainer,
+				func(e *appsv1.DeploymentConfig) bool {
+					return occlient.IsConfigApplied(componentSettings, e) &&
+						occlient.IsDCRolledOut(e)
+				},
+			)
 			if err != nil {
 				return errors.Wrapf(err, "unable to update DeploymentConfig image for %s component", componentName)
 			}
@@ -918,7 +961,21 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 			annotations[componentSourceURLAnnotation] = sourceURL
 
 			// Update the DeploymentConfig
-			err = client.UpdateDCToSupervisor(commonObjectMeta, commonImageMeta, componentSettings, resourceLimits, envVars, true, false, currentDC, foundCurrentDCContainer)
+			err = client.UpdateDCToSupervisor(
+				commonObjectMeta,
+				commonImageMeta,
+				componentSettings,
+				resourceLimits,
+				envVars,
+				true,
+				false,
+				currentDC,
+				foundCurrentDCContainer,
+				func(e *appsv1.DeploymentConfig) bool {
+					return (occlient.IsConfigApplied(componentSettings, e) &&
+						occlient.IsDCRolledOut(e))
+				},
+			)
 			if err != nil {
 				return errors.Wrapf(err, "unable to update DeploymentConfig for %s component", componentName)
 			}

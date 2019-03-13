@@ -77,9 +77,9 @@ func getDeploymentCondition(status appsv1.DeploymentConfigStatus, condType appsv
 	return nil
 }
 
-// isDCRolledOut indicates whether the deployment config is rolled out or not
+// IsDCRolledOut indicates whether the deployment config is rolled out or not
 // Borrowed from https://github.com/openshift/origin/blob/64349ed036ed14808124c5b4d8538b3856783b54/pkg/oc/originpolymorphichelpers/deploymentconfigs/status.go
-func isDCRolledOut(config *appsv1.DeploymentConfig) bool {
+func IsDCRolledOut(config *appsv1.DeploymentConfig) bool {
 	cond := getDeploymentCondition(config.Status, appsv1.DeploymentProgressing)
 	if config.Generation <= config.Status.ObservedGeneration {
 		switch {
@@ -108,7 +108,7 @@ func isDCRolledOut(config *appsv1.DeploymentConfig) bool {
 	return false
 }
 
-func isConfigApplied(componentConfig config.ComponentSettings, dc *appsv1.DeploymentConfig) (isConfApplied bool) {
+func IsConfigApplied(componentConfig config.ComponentSettings, dc *appsv1.DeploymentConfig) (isConfApplied bool) {
 	/*
 		TODO: Add checks for updation of:
 		* ref

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/testingutil"
 
 	"github.com/pkg/errors"
@@ -69,7 +70,6 @@ func fakeDeploymentConfig(name string, image string, envVars []corev1.EnvVar, en
 	// Generate the DeploymentConfig that will be used.
 	dc := generateSupervisordDeploymentConfig(
 		commonObjectMeta,
-		image,
 		commonImageMeta,
 		envVars,
 		envfrom,
@@ -3593,7 +3593,7 @@ func TestPatchCurrentDC(t *testing.T) {
 				),
 			},
 			wantErr: false,
-			actions: 3,
+			actions: 2,
 		},
 		{
 			name: "Case 2: Test patching with non-nil prePatchDCHandler",
@@ -3608,7 +3608,7 @@ func TestPatchCurrentDC(t *testing.T) {
 				prePatchDCHandler: removeTracesOfSupervisordFromDC,
 			},
 			wantErr: false,
-			actions: 3,
+			actions: 2,
 		},
 		{
 			name: "Case 3: Test patching with the wrong name",
@@ -3654,7 +3654,13 @@ func TestPatchCurrentDC(t *testing.T) {
 			})
 
 			// Run function PatchCurrentDC
-			err := fakeClient.PatchCurrentDC(tt.args.name, tt.args.dcPatch, tt.args.prePatchDCHandler)
+			existingContainer, err := FindContainer(tt.args.dcBefore.Spec.Template.Spec.Containers, tt.args.dcBefore.Name)
+			if err != nil {
+				t.Errorf("client.PatchCurrentDC() unexpected error attempting to fetch component container. error %v", err)
+			}
+			err = fakeClient.PatchCurrentDC(tt.args.name, tt.args.dcPatch, tt.args.prePatchDCHandler, func(*appsv1.DeploymentConfig) bool {
+				return true
+			}, &(tt.args.dcBefore), existingContainer)
 
 			// Error checking PatchCurrentDC
 			if !tt.wantErr == (err != nil) {
@@ -3678,9 +3684,15 @@ func TestPatchCurrentDC(t *testing.T) {
 
 func TestUpdateDCToGit(t *testing.T) {
 	type args struct {
-		name     string
-		newImage string
-		dc       appsv1.DeploymentConfig
+		name                       string
+		newImage                   string
+		dc                         appsv1.DeploymentConfig
+		ports                      []corev1.ContainerPort
+		componentSettings          config.ComponentSettings
+		resourceLimits             corev1.ResourceRequirements
+		envVars                    []corev1.EnvVar
+		isDeleteSupervisordVolumes bool
+		dcRollOutWaitCond          dcRollOutWait
 	}
 	tests := []struct {
 		name    string
@@ -3693,12 +3705,21 @@ func TestUpdateDCToGit(t *testing.T) {
 			args: args{
 				name:     "foo",
 				newImage: "bar",
+
 				dc: *fakeDeploymentConfig("foo", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, fakeResourceConsumption()),
+				ports:                      []corev1.ContainerPort{},
+				componentSettings:          fakeComponentSettings("foo", "foo", "foo", string(util.GIT), "nodejs"),
+				resourceLimits:             corev1.ResourceRequirements{},
+				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
+				isDeleteSupervisordVolumes: false,
+				dcRollOutWaitCond: func(*appsv1.DeploymentConfig) bool {
+					return true
+				},
 			},
 			wantErr: false,
-			actions: 4,
+			actions: 2,
 		},
 		{
 			name: "Case 2: Fail if the variable passed in is blank",
@@ -3708,6 +3729,14 @@ func TestUpdateDCToGit(t *testing.T) {
 				dc: *fakeDeploymentConfig("foo", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, fakeResourceConsumption()),
+				ports:                      []corev1.ContainerPort{},
+				componentSettings:          fakeComponentSettings("foo", "foo", "foo", string(util.GIT), "foo"),
+				resourceLimits:             corev1.ResourceRequirements{},
+				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
+				isDeleteSupervisordVolumes: false,
+				dcRollOutWaitCond: func(*appsv1.DeploymentConfig) bool {
+					return true
+				},
 			},
 			wantErr: true,
 			actions: 4,
@@ -3720,6 +3749,14 @@ func TestUpdateDCToGit(t *testing.T) {
 				dc: *fakeDeploymentConfig("foo2", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, []util.ResourceRequirementInfo{}),
+				ports:                      []corev1.ContainerPort{},
+				componentSettings:          fakeComponentSettings("foo2", "foo", "foo", string(util.GIT), "foo2"),
+				resourceLimits:             corev1.ResourceRequirements{},
+				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
+				isDeleteSupervisordVolumes: false,
+				dcRollOutWaitCond: func(*appsv1.DeploymentConfig) bool {
+					return true
+				},
 			},
 			wantErr: true,
 			actions: 3,
@@ -3732,9 +3769,17 @@ func TestUpdateDCToGit(t *testing.T) {
 				dc: *fakeDeploymentConfig("foo", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, []util.ResourceRequirementInfo{}),
+				ports:                      []corev1.ContainerPort{},
+				componentSettings:          fakeComponentSettings("foo", "foo", "foo", string(util.GIT), "foo"),
+				resourceLimits:             corev1.ResourceRequirements{},
+				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
+				isDeleteSupervisordVolumes: false,
+				dcRollOutWaitCond: func(*appsv1.DeploymentConfig) bool {
+					return true
+				},
 			},
 			wantErr: false,
-			actions: 4,
+			actions: 2,
 		},
 	}
 	for _, tt := range tests {
@@ -3778,7 +3823,7 @@ func TestUpdateDCToGit(t *testing.T) {
 			})
 
 			// Run function UpdateDCToGit
-			err := fakeClient.UpdateDCToGit(metav1.ObjectMeta{Name: tt.args.name}, tt.args.newImage)
+			err := fakeClient.UpdateDCToGit(metav1.ObjectMeta{Name: tt.args.name}, tt.args.newImage, tt.args.ports, tt.args.componentSettings, tt.args.resourceLimits, tt.args.envVars, tt.args.isDeleteSupervisordVolumes, &(tt.args.dc), tt.args.dc.Spec.Template.Spec.Containers[0], tt.args.dcRollOutWaitCond)
 
 			// Error checking UpdateDCToGit
 			if !tt.wantErr == (err != nil) {
@@ -4069,6 +4114,16 @@ func TestDeleteEnvVars(t *testing.T) {
 	}
 }
 
+func fakeComponentSettings(cmpName string, appName string, projectName string, srcType string, cmpType string) config.ComponentSettings {
+	return config.ComponentSettings{
+		ComponentName: &cmpName,
+		App:           &appName,
+		Project:       &projectName,
+		SourceType:    &srcType,
+		ComponentType: &cmpType,
+	}
+}
+
 func TestUpdateDCToSupervisor(t *testing.T) {
 	type args struct {
 		name           string
@@ -4077,6 +4132,8 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 		imageNamespace string
 		isToLocal      bool
 		dc             appsv1.DeploymentConfig
+		cmpSettings    config.ComponentSettings
+		envVars        []corev1.EnvVar
 	}
 	tests := []struct {
 		name    string
@@ -4091,13 +4148,15 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 				imageName:      "nodejs",
 				expectedImage:  "nodejs",
 				imageNamespace: "openshift",
+				cmpSettings:    fakeComponentSettings("foo", "foo", "foo", string(util.LOCAL), "nodejs"),
+				envVars:        []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				isToLocal:      true,
 				dc: *fakeDeploymentConfig("foo", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, fakeResourceConsumption()),
 			},
 			wantErr: false,
-			actions: 4,
+			actions: 2,
 		},
 		{
 			name: "Case 2: Fail if unable to find container",
@@ -4107,6 +4166,8 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 				expectedImage:  "foobar",
 				imageNamespace: "testing",
 				isToLocal:      false,
+				cmpSettings:    fakeComponentSettings("foo", "foo", "foo", string(util.LOCAL), "nodejs"),
+				envVars:        []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				dc: *fakeDeploymentConfig("foo", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, []util.ResourceRequirementInfo{}),
@@ -4167,7 +4228,24 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 			})
 
 			// Run function UpdateDCToSupervisor
-			err := fakeClient.UpdateDCToSupervisor(metav1.ObjectMeta{Name: tt.args.name}, tt.args.imageName, tt.args.isToLocal)
+			err := fakeClient.UpdateDCToSupervisor(
+				metav1.ObjectMeta{Name: tt.args.name},
+				CommonImageMeta{
+					Name:      tt.args.imageName,
+					Tag:       "latest",
+					Namespace: "openshift",
+				},
+				tt.args.cmpSettings,
+				corev1.ResourceRequirements{},
+				tt.args.envVars,
+				tt.args.isToLocal,
+				false,
+				&(tt.args.dc),
+				tt.args.dc.Spec.Template.Spec.Containers[0],
+				func(e *appsv1.DeploymentConfig) bool {
+					return true
+				},
+			)
 
 			// Error checking UpdateDCToSupervisor
 			if !tt.wantErr == (err != nil) {
@@ -4676,7 +4754,7 @@ func Test_findContainer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 
 			// Run function findContainer
-			container, err := findContainer(tt.args.containers, tt.args.name)
+			container, err := FindContainer(tt.args.containers, tt.args.name)
 
 			// Check that the container matches the name
 			if err == nil && container.Name != tt.args.name {
@@ -4745,7 +4823,9 @@ func TestWaitAndGetDC(t *testing.T) {
 				return true, fkWatch, nil
 			})
 			// Run function WaitAndGetDC
-			_, err := fakeClient.WaitAndGetDC(tt.args.name, tt.args.annotation, tt.args.value, tt.args.timeout)
+			_, err := fakeClient.WaitAndGetDC(tt.args.name, tt.args.timeout, func(*appsv1.DeploymentConfig) bool {
+				return !tt.wantErr
+			})
 			// Error checking WaitAndGetDC
 			if !tt.wantErr == (err != nil) {
 				t.Errorf(" client.WaitAndGetDC() unexpected error %v, wantErr %v", err, tt.wantErr)
