@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/fatih/color"
@@ -15,10 +14,12 @@ import (
 	appsv1 "github.com/openshift/api/apps/v1"
 	"github.com/pkg/errors"
 	applabels "github.com/redhat-developer/odo/pkg/application/labels"
+	"github.com/redhat-developer/odo/pkg/catalog"
 	componentlabels "github.com/redhat-developer/odo/pkg/component/labels"
 	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/log"
 	"github.com/redhat-developer/odo/pkg/occlient"
+	"github.com/redhat-developer/odo/pkg/odo/util/validation"
 	"github.com/redhat-developer/odo/pkg/preference"
 	"github.com/redhat-developer/odo/pkg/storage"
 	urlpkg "github.com/redhat-developer/odo/pkg/url"
@@ -41,14 +42,14 @@ const componentNameMaxLen = -1
 //		path: git url or source path or binary path
 //		paramType: One of CreateType as in GIT/LOCAL/BINARY
 // Returns: directory name
-func GetComponentDir(path string, paramType util.CreateType) (string, error) {
+func GetComponentDir(path string, paramType config.SrcType) (string, error) {
 	retVal := ""
 	switch paramType {
-	case util.GIT:
+	case config.GIT:
 		retVal = strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".git")
-	case util.LOCAL:
+	case config.LOCAL:
 		retVal = filepath.Base(path)
-	case util.BINARY:
+	case config.BINARY:
 		filename := filepath.Base(path)
 		var extension = filepath.Ext(filename)
 		retVal = filename[0 : len(filename)-len(extension)]
@@ -66,7 +67,7 @@ func GetComponentDir(path string, paramType util.CreateType) (string, error) {
 // GetDefaultComponentName generates a unique component name
 // Parameters: desired default component name(w/o prefix) and slice of existing component names
 // Returns: Unique component name and error if any
-func GetDefaultComponentName(componentPath string, componentPathType util.CreateType, componentType string, existingComponentList ComponentList) (string, error) {
+func GetDefaultComponentName(componentPath string, componentPathType config.SrcType, componentType string, existingComponentList ComponentList) (string, error) {
 	var prefix string
 
 	// Get component names from component list
@@ -228,7 +229,7 @@ func CreateFromPath(client *occlient.Client, params occlient.CreateArgs) error {
 	labels[componentlabels.ComponentTypeVersion] = imageTag
 
 	// save source path as annotation
-	sourceURL := util.GenFileURL(params.SourcePath, runtime.GOOS)
+	sourceURL := util.GenFileURL(params.SourcePath)
 	annotations := map[string]string{componentSourceURLAnnotation: sourceURL}
 	annotations[ComponentSourceTypeAnnotation] = string(params.SourceType)
 
@@ -346,40 +347,49 @@ func getS2IPaths(podEnvs []corev1.EnvVar) []string {
 //		stdout: io.Writer instance to write output to
 //	Returns:
 //		err: errors if any
-func CreateComponent(client *occlient.Client, componentConfig config.ComponentSettings, context string, stdout io.Writer) (err error) {
-	log.Successf("Initializing '%s' component", *(componentConfig.ComponentName))
+func CreateComponent(client *occlient.Client, componentConfig config.LocalConfigInfo, context string, stdout io.Writer) (err error) {
+
+	cmpName := componentConfig.GetName()
+	cmpType := componentConfig.GetType()
+	cmpSrcType := componentConfig.GetSourceType()
+	cmpPorts := componentConfig.GetPorts()
+	cmpMinCPU := componentConfig.GetMinCPU()
+	cmpMaxCPU := componentConfig.GetMaxCPU()
+	cmpMinMemory := componentConfig.GetMinMemory()
+	cmpMaxMemory := componentConfig.GetMaxMemory()
+	cmpSrcRef := componentConfig.GetRef()
+	appName := componentConfig.GetApplication()
+
+	log.Successf("Initializing '%s' component", cmpName)
 	createArgs := occlient.CreateArgs{
-		Name:            *(componentConfig.ComponentName),
-		ImageName:       *(componentConfig.ComponentType),
-		ApplicationName: *(componentConfig.App),
+		Name:            cmpName,
+		ImageName:       cmpType,
+		ApplicationName: appName,
 	}
-	createArgs.SourceType, err = util.GetCreateType(*(componentConfig.SourceType))
-	if err != nil {
-		return errors.Wrapf(err, "failed to create component with config %+v", componentConfig)
+	createArgs.SourceType = cmpSrcType
+	createArgs.SourcePath = componentConfig.GetSourceLocation()
+
+	if len(cmpPorts) > 0 {
+		createArgs.Ports = cmpPorts
 	}
-	if componentConfig.Ports != nil {
-		createArgs.Ports = strings.Split(*(componentConfig.Ports), " ")
-	}
-	if componentConfig.MaxCPU != nil && componentConfig.MinCPU != nil {
+
+	if cmpMaxCPU != "" && cmpMinCPU != "" {
 		createArgs.Resources = append(
 			createArgs.Resources,
-			*(util.FetchResourceQuantity(corev1.ResourceCPU, *(componentConfig.MinCPU), *(componentConfig.MaxCPU), "")),
+			*(util.FetchResourceQuantity(corev1.ResourceCPU, cmpMinCPU, cmpMaxCPU, "")),
 		)
 	}
-	if componentConfig.MaxMemory != nil && componentConfig.MinMemory != nil {
+	if cmpMaxMemory != "" && cmpMinMemory != "" {
 		createArgs.Resources = append(
 			createArgs.Resources,
-			*(util.FetchResourceQuantity(corev1.ResourceMemory, *(componentConfig.MinMemory), *(componentConfig.MaxMemory), "")),
+			*(util.FetchResourceQuantity(corev1.ResourceMemory, cmpMinMemory, cmpMaxMemory, "")),
 		)
 	}
-	switch *(componentConfig.SourceType) {
-	case string(util.GIT):
+	switch cmpSrcType {
+	case config.GIT:
 		// Use Git
-		if componentConfig.Ref != nil {
-			createArgs.SourceRef = *(componentConfig.Ref)
-		}
-		if componentConfig.Path != nil {
-			createArgs.SourcePath = *(componentConfig.Path)
+		if cmpSrcRef != "" {
+			createArgs.SourceRef = cmpSrcRef
 		}
 		if err = CreateFromGit(
 			client,
@@ -391,15 +401,7 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 		if err = Build(client, createArgs.Name, createArgs.ApplicationName, true, stdout); err != nil {
 			return errors.Wrapf(err, "failed to build component with args %+v", componentConfig)
 		}
-	case string(util.LOCAL):
-		if len(context) > 0 {
-			createArgs.SourcePath = context
-		} else {
-			createArgs.SourcePath, err = os.Getwd()
-			if err != nil {
-				return errors.Wrapf(err, "failed to create component with details as in %+v", componentConfig)
-			}
-		}
+	case config.LOCAL:
 		fileInfo, err := os.Stat(createArgs.SourcePath)
 		if err != nil {
 			return errors.Wrapf(err, "failed to get info of path %+v of component %+v", createArgs.SourcePath, createArgs)
@@ -411,19 +413,13 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 		if err = CreateFromPath(client, createArgs); err != nil {
 			return errors.Wrapf(err, "failed to create component with args %+v", createArgs)
 		}
-	case string(util.BINARY):
-		if len(context) > 0 {
-			createArgs.SourcePath, err = filepath.Abs(context)
-			if err != nil {
-				return errors.Wrapf(err, "failed to create component with config %+v", componentConfig)
-			}
-		}
+	case config.BINARY:
 		if err = CreateFromPath(client, createArgs); err != nil {
 			return errors.Wrapf(err, "failed to create component with args %+v", createArgs)
 		}
 	default:
 		// If the user does not provide anything (local, git or binary), use the current absolute path and deploy it
-		createArgs.SourceType = util.LOCAL
+		createArgs.SourceType = config.LOCAL
 		dir, err := os.Getwd()
 		if err != nil {
 			return errors.Wrapf(err, "cannot create component with current path as local source path since no component source details are passed")
@@ -436,6 +432,71 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 	return
 }
 
+// ValidateComponentCreateRequest validates request for component creation and returns errors if any
+// Parameters:
+//	componentSettings: Component settings
+//	isCmpExistsCheck: boolean to indicate whether or not error out if component with same name already exists
+func ValidateComponentCreateRequest(client *occlient.Client, componentSettings config.ComponentSettings, isCmpExistsCheck bool) (err error) {
+	// Check manddatory fields are set
+	if componentSettings.Name == nil ||
+		componentSettings.Application == nil ||
+		componentSettings.Project == nil ||
+		componentSettings.SourceType == nil ||
+		componentSettings.SourceLocation == nil ||
+		componentSettings.Type == nil {
+		return fmt.Errorf("component name, application, project, source type, source location and component type are mandatory parameters for component creation")
+	}
+
+	_, componentType, _, componentVersion := util.ParseComponentImageName(*componentSettings.Type)
+	// Check to see if the catalog type actually exists
+	exists, err := catalog.Exists(client, componentType)
+	if err != nil {
+		return errors.Wrapf(err, "Failed to create component of type %s", componentType)
+	}
+	if !exists {
+		log.Info("Run 'odo catalog list components' for a list of supported component types")
+		return fmt.Errorf("Failed to find component of type %s", componentType)
+	}
+
+	// Check to see if that particular version exists
+	versionExists, err := catalog.VersionExists(client, componentType, componentVersion)
+	if err != nil {
+		return errors.Wrapf(err, "Failed to create component of type %s of version %s", componentType, componentVersion)
+	}
+	if !versionExists {
+		log.Info("Run 'odo catalog list components' to see a list of supported component type versions")
+		return fmt.Errorf("Invalid component version %s:%s", componentType, componentVersion)
+	}
+
+	// Validate component name
+	err = validation.ValidateName(*componentSettings.Name)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create component of name %s", *componentSettings.Name)
+	}
+
+	if isCmpExistsCheck {
+		exists, err = Exists(client, *componentSettings.Name, *componentSettings.Application)
+		if err != nil {
+			return errors.Wrapf(err, "failed to check if component of name %s exists in application %s", *componentSettings.Name, *componentSettings.Application)
+		}
+		if exists {
+			return fmt.Errorf("component with name %s already exists in application %s", *componentSettings.Name, *componentSettings.Application)
+		}
+	}
+
+	if *componentSettings.SourceType == config.LOCAL {
+		srcLocInfo, err := os.Stat(*(componentSettings.SourceLocation))
+		if err != nil {
+			return errors.Wrapf(err, "failed to create component with settings %+v", componentSettings)
+		}
+		if !srcLocInfo.IsDir() {
+			return fmt.Errorf("source path for component created for local source needs to be a directory")
+		}
+	}
+
+	return
+}
+
 // ApplyConfig applies the component config onto component dc
 // Parameters:
 //	client: occlient instance
@@ -444,43 +505,45 @@ func CreateComponent(client *occlient.Client, componentConfig config.ComponentSe
 //	componentConfig: Component configuration
 // Returns:
 //	err: Errors if any else nil
-func ApplyConfig(client *occlient.Client, componentConfig config.ComponentSettings, context string, stdout io.Writer) (err error) {
-	if *(componentConfig.SourceType) == string(util.GIT) {
-		if err := Update(client, componentConfig, *(componentConfig.Path), stdout); err != nil {
+func ApplyConfig(client *occlient.Client, componentConfig config.LocalConfigInfo, context string, stdout io.Writer) (err error) {
+
+	cmpName := componentConfig.GetName()
+	cmpSrcLoc := componentConfig.GetSourceLocation()
+	if err != nil {
+		return err
+	}
+	cmpSrcType := componentConfig.GetSourceType()
+
+	if cmpSrcType == config.GIT {
+		if err := Update(client, componentConfig, cmpSrcLoc, stdout); err != nil {
 			return err
 		}
-		log.Successf("The component %s was updated successfully", *(componentConfig.ComponentName))
-	} else if *(componentConfig.SourceType) == string(util.LOCAL) {
-		var cmpPath string
-		if len(context) > 0 {
-			cmpPath = context
-		} else {
-			dir, err := os.Getwd()
-			if err != nil {
-				return errors.Wrapf(err, "failed to update component %s", *(componentConfig.ComponentName))
-			}
-			cmpPath = dir
+		log.Successf("The component %s was updated successfully", cmpName)
+	} else if cmpSrcType == config.LOCAL {
+		cmpSrcLoc, err := pkgUtil.GetAbsPath(cmpSrcLoc)
+		if err != nil {
+			return err
 		}
-		fileInfo, err := os.Stat(cmpPath)
+		fileInfo, err := os.Stat(cmpSrcLoc)
 		if err != nil {
 			return err
 		}
 		if !fileInfo.IsDir() {
 			return fmt.Errorf("incorrect context passed. It should be a path to the compoennt source directory")
 		}
-		if err = Update(client, componentConfig, cmpPath, stdout); err != nil {
+		if err = Update(client, componentConfig, cmpSrcLoc, stdout); err != nil {
 			return err
 		}
-		log.Successf("The component %s was updated successfully", *(componentConfig.ComponentName))
-	} else if *(componentConfig.SourceType) == string(util.BINARY) {
-		path, err := pkgUtil.GetAbsPath(*(componentConfig.Path))
+		log.Successf("The component %s was updated successfully", cmpName)
+	} else if cmpSrcType == config.BINARY {
+		cmpSrcLoc, err := pkgUtil.GetAbsPath(cmpSrcLoc)
 		if err != nil {
 			return err
 		}
-		if err = Update(client, componentConfig, path, stdout); err != nil {
+		if err = Update(client, componentConfig, cmpSrcLoc, stdout); err != nil {
 			return err
 		}
-		log.Successf("The component %s was updated successfully", *(componentConfig.ComponentName))
+		log.Successf("The component %s was updated successfully", cmpName)
 	}
 	return
 }
@@ -737,17 +800,15 @@ func GetComponentSource(client *occlient.Client, componentName string, applicati
 // newSource indicates path of the source directory or binary or the git URL
 // stdout is the io writer for streaming build logs on stdout
 //func Update(client *occlient.Client, componentName string, applicationName string, newSourceType string, newSource string, newSourceRef string, stdout io.Writer) error {
-func Update(client *occlient.Client, componentSettings config.ComponentSettings, newSource string, stdout io.Writer) error {
+func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, newSource string, stdout io.Writer) error {
 	// STEP 1. Create the common Object Meta for updating.
 
-	componentName := *(componentSettings.ComponentName)
-	applicationName := *(componentSettings.App)
-	newSourceType := *(componentSettings.SourceType)
-
-	var newSourceRef string
-	if componentSettings.Ref != nil {
-		newSourceRef = *(componentSettings.Ref)
-	}
+	componentName := componentSettings.GetName()
+	applicationName := componentSettings.GetApplication()
+	newSourceType := componentSettings.GetSourceType()
+	newSourceRef := componentSettings.GetRef()
+	componentImageType := componentSettings.GetType()
+	cmpPorts := componentSettings.GetPorts()
 
 	// Retrieve the old source type
 	oldSourceType, _, err := GetComponentSource(client, componentName, applicationName)
@@ -763,18 +824,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 
 	// Create annotations
 	annotations := map[string]string{componentSourceURLAnnotation: newSource}
-	annotations[ComponentSourceTypeAnnotation] = newSourceType
-
-	var componentImageType string
-	if componentSettings.ComponentType == nil {
-		// Component Type
-		componentImageType, err = GetComponentType(client, componentName, applicationName)
-		if err != nil {
-			return errors.Wrap(err, "unable to get component image type for updating")
-		}
-	} else {
-		componentImageType = *(componentSettings.ComponentType)
-	}
+	annotations[ComponentSourceTypeAnnotation] = string(newSourceType)
 
 	// Parse componentImageType before adding to labels
 	imageNS, imageName, imageTag, _, err := occlient.ParseImageName(componentImageType)
@@ -814,8 +864,8 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 	}
 
 	ports := foundCurrentDCContainer.Ports
-	if componentSettings.Ports != nil {
-		ports, err = util.GetContainerPortsFromStrings(strings.Split(*(componentSettings.Ports), " "))
+	if len(cmpPorts) > 0 {
+		ports, err = util.GetContainerPortsFromStrings(cmpPorts)
 		if err != nil {
 			return errors.Wrapf(err, "failed to apply component config %+v to component %s", componentSettings, commonObjectMeta.Name)
 		}
@@ -861,7 +911,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 			componentSettings,
 			resourceLimits,
 			envVars,
-			oldSourceType != string(util.GIT),
+			oldSourceType != string(config.GIT),
 			currentDC,
 			foundCurrentDCContainer,
 			func(e *appsv1.DeploymentConfig) bool {
@@ -883,7 +933,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 		// Steps to update component from git to local or binary
 
 		// Update the sourceURL since it is not a local/binary file.
-		sourceURL := util.GenFileURL(newSource, runtime.GOOS)
+		sourceURL := util.GenFileURL(newSource)
 		annotations[componentSourceURLAnnotation] = sourceURL
 
 		// Need to delete the old BuildConfig
@@ -939,7 +989,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 				componentSettings,
 				resourceLimits,
 				envVars,
-				oldSourceType != string(util.GIT),
+				oldSourceType != string(config.GIT),
 				currentDC,
 				foundCurrentDCContainer,
 				func(e *appsv1.DeploymentConfig) bool {
@@ -957,7 +1007,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 		} else if newSourceType == "local" || newSourceType == "binary" {
 
 			// Update the sourceURL
-			sourceURL := util.GenFileURL(newSource, runtime.GOOS)
+			sourceURL := util.GenFileURL(newSource)
 			annotations[componentSourceURLAnnotation] = sourceURL
 
 			// Update the DeploymentConfig
@@ -967,7 +1017,7 @@ func Update(client *occlient.Client, componentSettings config.ComponentSettings,
 				componentSettings,
 				resourceLimits,
 				envVars,
-				newSourceType == string(util.LOCAL),
+				newSourceType == config.LOCAL,
 				false,
 				currentDC,
 				foundCurrentDCContainer,

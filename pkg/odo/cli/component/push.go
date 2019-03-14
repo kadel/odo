@@ -46,8 +46,7 @@ const PushRecommendedCommandName = "push"
 // PushOptions encapsulates options that push command uses
 type PushOptions struct {
 	ignores          []string
-	local            string
-	sourceType       string
+	sourceType       config.SrcType
 	sourcePath       string
 	localConfig      *config.LocalConfigInfo
 	componentContext string
@@ -67,44 +66,25 @@ func NewPushOptions() *PushOptions {
 func (po *PushOptions) Complete(name string, cmd *cobra.Command, args []string) (err error) {
 	po.client = genericclioptions.Client(cmd)
 
-	var contextFlag *string
-	if len(po.componentContext) > 0 {
-		contextFlag = &(po.componentContext)
-	}
-
-	conf, err := config.NewLocalConfigInfo(contextFlag)
+	conf, err := config.NewLocalConfigInfo(po.componentContext)
 	if err != nil {
 		return errors.Wrap(err, "failed to fetch component config")
 	}
 	po.localConfig = conf
 
-	if _, err = os.Stat(po.localConfig.Filename); err != nil {
-		return errors.Wrapf(err, "failed trying to read config file in %s", po.localConfig.Filename)
-	}
+	po.sourceType = po.localConfig.GetSourceType()
+	po.sourcePath = po.localConfig.GetSourceLocation()
 
-	po.sourceType = *(po.localConfig.ComponentSettings.SourceType)
-	if po.sourceType == string(util.LOCAL) {
-		if len(po.componentContext) != 0 {
-			po.sourcePath = util.GenFileURL(po.componentContext, runtime.GOOS)
-		} else {
-			po.sourcePath, err = os.Getwd()
-			if err != nil {
-				return errors.Wrapf(err, "failed to create component with config %+v", po.localConfig)
-			}
-		}
-	}
-	if po.sourceType == string(util.BINARY) {
-		po.sourcePath = *(po.localConfig.ComponentSettings.Path)
-	}
+	cmpName := po.localConfig.GetName()
 
-	if po.sourceType == string(util.BINARY) || po.sourceType == string(util.LOCAL) {
+	if po.sourceType == config.BINARY || po.sourceType == config.LOCAL {
 		u, err := url.Parse(po.sourcePath)
 		if err != nil {
-			return errors.Wrapf(err, "unable to parse source %s from component %s", po.sourcePath, *(po.localConfig.ComponentSettings.ComponentName))
+			return errors.Wrapf(err, "unable to parse source %s from component %s", po.sourcePath, cmpName)
 		}
 
 		if u.Scheme != "" && u.Scheme != "file" {
-			return fmt.Errorf("Component %s has invalid source path %s", *(po.localConfig.ComponentSettings.ComponentName), u.Scheme)
+			return fmt.Errorf("Component %s has invalid source path %s", cmpName, u.Scheme)
 		}
 		po.sourcePath = util.ReadFilePath(u, runtime.GOOS)
 	}
@@ -122,56 +102,60 @@ func (po *PushOptions) Complete(name string, cmd *cobra.Command, args []string) 
 
 // Validate validates the push parameters
 func (po *PushOptions) Validate() (err error) {
-	// if the componentName is blank then there is no active component set
-	if (po.localConfig.ComponentSettings.ComponentName == nil) && len(*(po.localConfig.ComponentSettings.ComponentName)) == 0 {
-		return fmt.Errorf("no component is set in component config. Use 'odo config set ComponentName <component_name>'")
-	}
-
-	return
+	return component.ValidateComponentCreateRequest(po.Context.Client, po.localConfig.GetComponentSettings(), false)
 }
 
 func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
-	isPrjExists, err := project.Exists(po.client, *(po.localConfig.ComponentSettings.Project))
+	cmpName := po.localConfig.GetName()
+	prjName := po.localConfig.GetProject()
+	appName := po.localConfig.GetApplication()
+	cmpType := po.localConfig.GetType()
+
+	isPrjExists, err := project.Exists(po.client, prjName)
 	if err != nil {
-		return errors.Wrapf(err, "failed to check if project with name %s exists", *(po.localConfig.ComponentSettings.Project))
+		return errors.Wrapf(err, "failed to check if project with name %s exists", prjName)
 	}
 	if !isPrjExists {
-		log.Successf("Creating project %s", *(po.localConfig.ComponentSettings.Project))
-		err = project.Create(po.client, *(po.localConfig.ComponentSettings.Project), true)
+		log.Successf("Creating project %s", prjName)
+		err = project.Create(po.client, prjName, true)
 		if err != nil {
-			log.Errorf("Failed creating project %s", *(po.localConfig.ComponentSettings.Project))
+			log.Errorf("Failed creating project %s", prjName)
 			return errors.Wrapf(
 				err,
 				"project %s does not exist. Failed creating it.Please try after creating project using `odo project create <project_name>`",
-				*(po.localConfig.ComponentSettings.Project),
+				prjName,
 			)
 		}
-		log.Successf("Successfully created project %s", *(po.localConfig.ComponentSettings.Project))
+		log.Successf("Successfully created project %s", prjName)
 	}
-	po.client.Namespace = *(po.localConfig.ComponentSettings.Project)
+	po.client.Namespace = prjName
 
-	isCmpExists, err := component.Exists(po.client, *(po.localConfig.ComponentSettings.ComponentName), *(po.localConfig.ComponentSettings.App))
+	isCmpExists, err := component.Exists(po.client, cmpName, appName)
 	if err != nil {
-		return errors.Wrapf(err, "failed to check if component %s exists or not", *(po.localConfig.ComponentSettings.ComponentName))
+		return errors.Wrapf(err, "failed to check if component %s exists or not", cmpName)
 	}
 
 	if !isCmpExists {
-		log.Successf("Creating %s component with name %s", *(po.localConfig.ComponentSettings.ComponentType), *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Creating %s component with name %s", cmpType, cmpName)
 		// Classic case of component creation
-		if err = component.CreateComponent(po.client, po.localConfig.ComponentSettings, po.componentContext, stdout); err != nil {
-			log.Errorf("Failed to create component with settings %+v. Error: %+v", po.localConfig.ComponentSettings, err)
+		if err = component.CreateComponent(po.client, *po.localConfig, po.componentContext, stdout); err != nil {
+			log.Errorf(
+				"Failed to create component with name %s. Please use `odo config view` to view settings used to create component. Error: %+v",
+				cmpName,
+				err,
+			)
 			os.Exit(1)
 		}
-		log.Successf("Successfully created component %s", *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Successfully created component %s", cmpName)
 	} else {
-		log.Successf("Applying component settings %+v to component: %v", po.localConfig, *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Applying component settings %+v to component: %v", po.localConfig, cmpName)
 		// Apply config
-		err = component.ApplyConfig(po.client, po.localConfig.ComponentSettings, po.componentContext, stdout)
+		err = component.ApplyConfig(po.client, *po.localConfig, po.componentContext, stdout)
 		if err != nil {
 			log.Errorf("Failed to update config to component deployed. Error %+v", err)
 			os.Exit(1)
 		}
-		log.Successf("Successfully applied component settings %+v to component: %v", po.localConfig.ComponentSettings, *(po.localConfig.ComponentSettings.ComponentName))
+		log.Successf("Successfully created component with name: %v", cmpName)
 	}
 	return nil
 }
@@ -180,24 +164,26 @@ func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
 func (po *PushOptions) Run() (err error) {
 	stdout := color.Output
 
+	cmpName := po.localConfig.GetName()
+	appName := po.localConfig.GetApplication()
+
 	err = po.createCmpIfNotExists(stdout)
 	if err != nil {
 		return
 	}
 
-	log.Successf("Pushing changes to component: %v of type %s", *(po.localConfig.ComponentSettings.ComponentName), po.sourceType)
+	log.Successf("Pushing changes to component: %v of type %s", cmpName, po.sourceType)
 
 	switch po.sourceType {
-	case string(util.LOCAL), string(util.BINARY):
-		// use value of '--dir' as source if it was used
+	case config.LOCAL, config.BINARY:
 
-		if po.sourceType == string(util.LOCAL) {
+		if po.sourceType == config.LOCAL {
 			glog.V(4).Infof("Copying directory %s to pod", po.sourcePath)
 			err = component.PushLocal(
 				po.client,
-				*(po.localConfig.ComponentSettings.ComponentName),
-				*(po.localConfig.ComponentSettings.App),
-				po.sourcePath,
+				cmpName,
+				appName,
+				po.localConfig.GetSourceLocation(),
 				os.Stdout,
 				[]string{},
 				[]string{},
@@ -209,8 +195,8 @@ func (po *PushOptions) Run() (err error) {
 			glog.V(4).Infof("Copying file %s to pod", po.sourcePath)
 			err = component.PushLocal(
 				po.client,
-				*(po.localConfig.ComponentSettings.ComponentName),
-				*(po.localConfig.ComponentSettings.App),
+				cmpName,
+				appName,
 				dir,
 				os.Stdout,
 				[]string{po.sourcePath},
@@ -220,27 +206,21 @@ func (po *PushOptions) Run() (err error) {
 			)
 		}
 		if err != nil {
-			return errors.Wrapf(err, fmt.Sprintf("Failed to push component: %v", *(po.localConfig.ComponentSettings.ComponentName)))
+			return errors.Wrapf(err, fmt.Sprintf("Failed to push component: %v", cmpName))
 		}
 
 	case "git":
-		// currently we don't support changing build type
-		// it doesn't make sense to use --dir with git build
-		if len(po.local) != 0 {
-			log.Errorf("Unable to push local directory:%s to component %s that uses Git repository:%s.", po.local, *(po.localConfig.ComponentSettings.ComponentName), po.sourcePath)
-			os.Exit(1)
-		}
 		err := component.Build(
 			po.client,
-			*(po.localConfig.ComponentSettings.ComponentName),
-			*(po.localConfig.ComponentSettings.App),
+			cmpName,
+			appName,
 			true,
 			stdout,
 		)
-		return errors.Wrapf(err, fmt.Sprintf("failed to push component: %v", *(po.localConfig.ComponentSettings.ComponentName)))
+		return errors.Wrapf(err, fmt.Sprintf("failed to push component: %v", cmpName))
 	}
 
-	log.Successf("Changes successfully pushed to component: %v", *(po.localConfig.ComponentSettings.ComponentName))
+	log.Successf("Changes successfully pushed to component: %v", cmpName)
 
 	return
 }

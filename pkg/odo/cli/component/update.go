@@ -7,7 +7,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/odo/genericclioptions"
-	"github.com/redhat-developer/odo/pkg/util"
 
 	"github.com/redhat-developer/odo/pkg/odo/util/completion"
 	ktemplates "k8s.io/kubernetes/pkg/kubectl/cmd/templates"
@@ -36,7 +35,7 @@ type UpdateOptions struct {
 	local         string
 	ref           string
 	cmpCfgContext string
-	cmpConfig     config.ComponentSettings
+	cmpConfig     *config.LocalConfigInfo
 	*ComponentOptions
 }
 
@@ -68,15 +67,10 @@ func (uo *UpdateOptions) Complete(name string, cmd *cobra.Command, args []string
 		return errors.Wrapf(err, "failed to update component")
 	}
 
-	var cfgFileLoc *string
-	if len(uo.cmpCfgContext) > 0 {
-		cfgFileLoc = &(uo.cmpCfgContext)
-	}
-	lci, err := config.NewLocalConfigInfo(cfgFileLoc)
+	uo.cmpConfig, err = config.NewLocalConfigInfo(uo.cmpCfgContext)
 	if err != nil {
 		return errors.Wrapf(err, "failed to update component")
 	}
-	uo.cmpConfig = lci.ComponentSettings
 
 	return
 }
@@ -115,19 +109,22 @@ func (uo *UpdateOptions) Validate() (err error) {
 func (uo *UpdateOptions) Run() (err error) {
 	stdout := color.Output
 
-	if *(uo.cmpConfig.SourceType) == string(util.GIT) {
-		if err := component.Update(uo.Context.Client, uo.cmpConfig, *(uo.cmpConfig.Path), stdout); err != nil {
+	cmpSrcType := uo.cmpConfig.GetSourceType()
+	cmpName := uo.cmpConfig.GetName()
+
+	if cmpSrcType == config.GIT {
+		if err := component.Update(uo.Context.Client, *uo.cmpConfig, uo.cmpConfig.GetSourceLocation(), stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully", uo.componentName)
-	} else if *(uo.cmpConfig.SourceType) == string(util.LOCAL) {
+	} else if cmpSrcType == config.LOCAL {
 		var cmpPath string
 		if len(uo.cmpCfgContext) > 0 {
 			cmpPath = uo.cmpCfgContext
 		} else {
 			dir, err := os.Getwd()
 			if err != nil {
-				return errors.Wrapf(err, "failed to update component %s", *(uo.cmpConfig.ComponentName))
+				return errors.Wrapf(err, "failed to update component %s", cmpName)
 			}
 			cmpPath = dir
 		}
@@ -138,16 +135,16 @@ func (uo *UpdateOptions) Run() (err error) {
 		if !fileInfo.IsDir() {
 			return fmt.Errorf("Please provide a path to the directory")
 		}
-		if err = component.Update(uo.Context.Client, uo.cmpConfig, cmpPath, stdout); err != nil {
+		if err = component.Update(uo.Context.Client, *uo.cmpConfig, cmpPath, stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully, please use 'odo push' to push your local changes", uo.componentName)
-	} else if *(uo.cmpConfig.SourceType) == string(util.BINARY) {
+	} else if cmpSrcType == config.BINARY {
 		path, err := pkgUtil.GetAbsPath(uo.binary)
 		if err != nil {
 			return err
 		}
-		if err = component.Update(uo.Context.Client, uo.cmpConfig, path, stdout); err != nil {
+		if err = component.Update(uo.Context.Client, *uo.cmpConfig, path, stdout); err != nil {
 			return err
 		}
 		log.Successf("The component %s was updated successfully, please use 'odo push' to push your local changes", uo.componentName)

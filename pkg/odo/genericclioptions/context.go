@@ -83,18 +83,16 @@ func resolveProject(command *cobra.Command, client *occlient.Client) string {
 	} else {
 		// Get details from config file
 		fileName := FlagValueIfSet(command, ContextFlagName)
-		var filePtr *string
 		if fileName != "" {
 			fileAbs, err := pkgUtil.GetAbsPath(fileName)
 			util.LogErrorAndExit(err, "")
-			filePtr = &fileAbs
+			fileName = fileAbs
 		}
-		lci, err := config.NewLocalConfigInfo(filePtr)
+		lci, err := config.NewLocalConfigInfo(fileName)
 		util.LogErrorAndExit(err, "could not get component settings from config file")
 
-		if lci.ComponentSettings.Project != nil {
-			ns = *(lci.ComponentSettings.Project)
-		} else {
+		ns = lci.GetProject()
+		if ns == "" {
 			ns = project.GetCurrent(client)
 			if len(ns) <= 0 {
 				errFormat := "Could not get current project. Please create or set a project\n\t%s project create|set <project_name>"
@@ -123,13 +121,12 @@ func newContext(command *cobra.Command, createAppIfNeeded bool) *Context {
 
 	// Get details from config file
 	fileName := FlagValueIfSet(command, ContextFlagName)
-	var filePtr *string
 	if fileName != "" {
 		fAbs, err := pkgUtil.GetAbsPath(fileName)
 		util.LogErrorAndExit(err, "")
-		filePtr = &fAbs
+		fileName = fAbs
 	}
-	lci, err := config.NewLocalConfigInfo(filePtr)
+	lci, err := config.NewLocalConfigInfo(fileName)
 	util.LogErrorAndExit(err, "could not get component settings from config file")
 
 	// resolve application
@@ -138,9 +135,8 @@ func newContext(command *cobra.Command, createAppIfNeeded bool) *Context {
 	if len(appFlag) > 0 {
 		app = appFlag
 	} else {
-		if lci.ComponentSettings.App != nil {
-			app = *(lci.ComponentSettings.App)
-		} else {
+		app = lci.GetApplication()
+		if app == "" {
 			if createAppIfNeeded {
 				var err error
 				app, err = application.GetDefaultAppName()
@@ -172,9 +168,7 @@ func newContext(command *cobra.Command, createAppIfNeeded bool) *Context {
 	cmpFlag := FlagValueIfSet(command, ComponentFlagName)
 	if len(cmpFlag) == 0 {
 		// retrieve the current component if it exists if we didn't set the component flag
-		if lci.ComponentSettings.ComponentName != nil {
-			cmp = *(lci.ComponentSettings.ComponentName)
-		}
+		cmp = lci.GetName()
 	} else {
 		// if flag is set, check that the specified component exists
 		context.checkComponentExistsOrFail(cmpFlag)
