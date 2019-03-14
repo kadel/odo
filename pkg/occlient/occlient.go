@@ -1265,9 +1265,6 @@ type dcRollOutWait func(*appsv1.DeploymentConfig) bool
 // to perform arbitrary updates to a DC before it's finalized for patching
 func (c *Client) PatchCurrentDC(name string, dc appsv1.DeploymentConfig, prePatchDCHandler dcStructUpdater, waitCond dcRollOutWait, currentDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container) error {
 
-	/*
-		copyVolumesAndVolumeMounts(dc, currentDC, foundCurrentDCContainer)
-	*/
 	if prePatchDCHandler != nil {
 		err := prePatchDCHandler(&dc, currentDC, existingCmpContainer)
 		if err != nil {

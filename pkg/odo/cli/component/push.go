@@ -159,7 +159,7 @@ func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
 		log.Successf("Creating %s component with name %s", *(po.localConfig.ComponentSettings.ComponentType), *(po.localConfig.ComponentSettings.ComponentName))
 		// Classic case of component creation
 		if err = component.CreateComponent(po.client, po.localConfig.ComponentSettings, po.componentContext, stdout); err != nil {
-			log.Errorf("Failed to create component with settings %+v", po.localConfig.ComponentSettings)
+			log.Errorf("Failed to create component with settings %+v. Error: %+v", po.localConfig.ComponentSettings, err)
 			os.Exit(1)
 		}
 		log.Successf("Successfully created component %s", *(po.localConfig.ComponentSettings.ComponentName))
