@@ -22,26 +22,6 @@ type CommonImageMeta struct {
 	Ports     []corev1.ContainerPort
 }
 
-func getComponentType(dc *appsv1.DeploymentConfig, componentConfig config.ComponentSettings) string {
-	// Get Image params from existing dc
-	triggers := dc.Spec.Triggers
-	var imageNS, imageName, componentType string
-	for _, trigger := range triggers {
-		if trigger.Type == "ImageChange" {
-			imageNS = trigger.ImageChangeParams.From.Namespace
-			imageName = trigger.ImageChangeParams.From.Name
-		}
-	}
-
-	if componentConfig.ComponentType != nil {
-		componentType = *(componentConfig.ComponentType)
-	} else {
-		componentType = fmt.Sprintf("%s/%s", imageNS, imageName)
-	}
-
-	return componentType
-}
-
 func getComponentBuilderDetails(dc *appsv1.DeploymentConfig) (imageNS string, imageVersionedName string) {
 	triggers := dc.Spec.Triggers
 	for _, trigger := range triggers {
