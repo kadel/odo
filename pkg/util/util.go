@@ -155,9 +155,14 @@ func ReadFilePath(u *url.URL, os string) string {
 }
 
 // GenFileURL Converts file path on windows to /C:/path/to/file to work in URL
-func GenFileURL(location string, os string) string {
+func GenFileURL(location string, os ...string) string {
+	// param os is made variadic only for the purpose of UTs but need not be passed mandatorily
+	currOS := runtime.GOOS
+	if len(os) > 0 {
+		currOS = os[0]
+	}
 	urlPath := location
-	if os == WIN {
+	if currOS == WIN {
 		urlPath = "/" + strings.Replace(location, "\\", "/", -1)
 	}
 	return "file://" + urlPath
@@ -553,32 +558,4 @@ func MachineOutput(outputFlag string, resource interface{}) (string, error) {
 	}
 
 	return string(out), err
-}
-
-// CreateType is an enum to indicate the type of source of component -- local source/binary or git for the generation of app/component names
-type CreateType string
-
-const (
-	// GIT as source of component
-	GIT CreateType = "git"
-	// LOCAL Local source path as source of component
-	LOCAL CreateType = "local"
-	// BINARY Local Binary as source of component
-	BINARY CreateType = "binary"
-	// NONE indicates there's no information about the type of source of the component
-	NONE CreateType = ""
-)
-
-// GetCreateType returns enum equivalent of passed component source type or error if unsupported type passed
-func GetCreateType(ctStr string) (CreateType, error) {
-	switch strings.ToLower(ctStr) {
-	case string(GIT):
-		return GIT, nil
-	case string(LOCAL):
-		return LOCAL, nil
-	case string(BINARY):
-		return BINARY, nil
-	default:
-		return NONE, fmt.Errorf("Unsupported component source type: %s", ctStr)
-	}
 }

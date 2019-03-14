@@ -34,13 +34,13 @@ func getComponentBuilderDetails(dc *appsv1.DeploymentConfig) (imageNS string, im
 }
 
 func resolveComponentType(imageName string) string {
-	// Resolve default namespace for image
-	if !strings.Contains(imageName, "/") {
-		imageName = fmt.Sprintf("openshift/%s", imageName)
-	}
+	//TODO: Add imageNS resoution
 	// Resolve default version
 	if !strings.Contains(imageName, ":") {
 		imageName = fmt.Sprintf("%s:latest", imageName)
+	}
+	if strings.Contains(imageName, "/") {
+		return strings.Split(imageName, "/")[1]
 	}
 	return imageName
 }
@@ -88,14 +88,25 @@ func IsDCRolledOut(config *appsv1.DeploymentConfig) bool {
 	return false
 }
 
-func IsConfigApplied(componentConfig config.ComponentSettings, dc *appsv1.DeploymentConfig) (isConfApplied bool) {
+func IsConfigApplied(componentConfig config.LocalConfigInfo, dc *appsv1.DeploymentConfig) (isConfApplied bool) {
 	/*
 		TODO: Add checks for updation of:
 		* ref
 		* ports
 		* path
 	*/
-	cmpBuilderImgNS, cmpBuilderImgVersionedName := getComponentBuilderDetails(dc)
+
+	cfgAppName := componentConfig.GetApplication()
+	cfgCmpName := componentConfig.GetName()
+	cfgSrcType := string(componentConfig.GetSourceType())
+	cfgMinCpu := componentConfig.GetMinCPU()
+	cfgMaxCpu := componentConfig.GetMaxCPU()
+	cfgMinMemory := componentConfig.GetMinMemory()
+	cfgMaxMemory := componentConfig.GetMaxMemory()
+	cfgCmpType := componentConfig.GetType()
+	cfgProject := componentConfig.GetProject()
+
+	_, cmpBuilderImgVersionedName := getComponentBuilderDetails(dc)
 	cmpContainer, err := FindContainer(dc.Spec.Template.Spec.Containers, dc.Name)
 	if err != nil {
 		glog.V(4).Infof("Container with name %s not found in passed dc", dc.Name)
@@ -103,19 +114,19 @@ func IsConfigApplied(componentConfig config.ComponentSettings, dc *appsv1.Deploy
 	}
 	isConfApplied = (
 	// TODO: Use the  label exported in pkg/application/labels/labels.go but defer it for now so as to defer the cyclic dependency to a new PR
-	dc.Labels["app.kubernetes.io/name"] == *(componentConfig.App) &&
-		fmt.Sprintf("%s/%s", cmpBuilderImgNS, cmpBuilderImgVersionedName) == resolveComponentType(*(componentConfig.ComponentType)) &&
-		dc.Labels[componentlabels.ComponentLabel] == *(componentConfig.ComponentName) &&
-		dc.Namespace == *(componentConfig.Project) &&
+	dc.Labels["app.kubernetes.io/name"] == cfgAppName &&
+		cmpBuilderImgVersionedName == resolveComponentType(cfgCmpType) &&
+		dc.Labels[componentlabels.ComponentLabel] == cfgCmpName &&
+		dc.Namespace == cfgProject &&
 		// TODO: Use the  label exported in pkg/component/component.go but defer it for now so as to defer the cyclic dependency to a new PR
-		dc.Annotations["app.kubernetes.io/component-source-type"] == *(componentConfig.SourceType))
-	if (componentConfig.MinCPU != nil) && (componentConfig.MaxCPU != nil) {
-		cpuExpected := util.FetchResourceQuantity(corev1.ResourceCPU, *(componentConfig.MinCPU), *(componentConfig.MaxCPU), "")
+		dc.Annotations["app.kubernetes.io/component-source-type"] == string(cfgSrcType))
+	if (cfgMinCpu != "") && (cfgMaxCpu != "") {
+		cpuExpected := util.FetchResourceQuantity(corev1.ResourceCPU, cfgMinCpu, cfgMaxCpu, "")
 		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Cpu().Cmp(cpuExpected.MaxQty) == 0)
 		isConfApplied = isConfApplied && (cmpContainer.Resources.Requests.Cpu().Cmp(cpuExpected.MinQty) == 0)
 	}
-	if (componentConfig.MinMemory != nil) && (componentConfig.MaxMemory != nil) {
-		memoryExpected := util.FetchResourceQuantity(corev1.ResourceMemory, *(componentConfig.MinMemory), *(componentConfig.MaxMemory), "")
+	if (cfgMinMemory != "") && (cfgMaxMemory != "") {
+		memoryExpected := util.FetchResourceQuantity(corev1.ResourceMemory, cfgMinMemory, cfgMaxMemory, "")
 		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Memory().Cmp(memoryExpected.MaxQty) == 0)
 		isConfApplied = isConfApplied && (cmpContainer.Resources.Requests.Memory().Cmp(memoryExpected.MinQty) == 0)
 	}
@@ -235,14 +246,20 @@ func FetchContainerResourceLimits(container corev1.Container) corev1.ResourceReq
 	return container.Resources
 }
 
-func GetResourceRequirementsFromCmpSettings(cfg config.ComponentSettings) *corev1.ResourceRequirements {
+func GetResourceRequirementsFromCmpSettings(cfg config.LocalConfigInfo) *corev1.ResourceRequirements {
 	var resReq []util.ResourceRequirementInfo
-	if (cfg.MinCPU != nil) && (cfg.MaxCPU) != nil {
-		cpuReq := util.FetchResourceQuantity(corev1.ResourceCPU, *(cfg.MinCPU), *(cfg.MaxCPU), "")
+
+	cfgMinCPU := cfg.GetMinCPU()
+	cfgMaxCPU := cfg.GetMaxCPU()
+	cfgMinMemory := cfg.GetMinMemory()
+	cfgMaxMemory := cfg.GetMaxMemory()
+
+	if (cfgMinCPU != "") && (cfgMaxCPU) != "" {
+		cpuReq := util.FetchResourceQuantity(corev1.ResourceCPU, cfgMinCPU, cfgMaxCPU, "")
 		resReq = append(resReq, *cpuReq)
 	}
-	if (cfg.MinMemory != nil) && (cfg.MaxMemory != nil) {
-		memReq := util.FetchResourceQuantity(corev1.ResourceMemory, *(cfg.MinMemory), *(cfg.MaxMemory), "")
+	if (cfgMinMemory != "") && (cfgMaxMemory != "") {
+		memReq := util.FetchResourceQuantity(corev1.ResourceMemory, cfgMinMemory, cfgMaxMemory, "")
 		resReq = append(resReq, *memReq)
 	}
 	if len(resReq) == 0 {

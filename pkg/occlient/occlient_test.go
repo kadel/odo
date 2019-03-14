@@ -3,6 +3,7 @@ package occlient
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -1655,7 +1656,7 @@ func TestNewAppS2I(t *testing.T) {
 				CreateArgs{
 					Name:       tt.args.commonObjectMeta.Name,
 					SourcePath: tt.args.gitURL,
-					SourceType: util.GIT,
+					SourceType: config.GIT,
 					ImageName:  tt.args.builderImage,
 					EnvVars:    tt.args.envVars,
 					Ports:      tt.args.inputPorts,
@@ -3688,7 +3689,7 @@ func TestUpdateDCToGit(t *testing.T) {
 		newImage                   string
 		dc                         appsv1.DeploymentConfig
 		ports                      []corev1.ContainerPort
-		componentSettings          config.ComponentSettings
+		componentSettings          config.LocalConfigInfo
 		resourceLimits             corev1.ResourceRequirements
 		envVars                    []corev1.EnvVar
 		isDeleteSupervisordVolumes bool
@@ -3710,7 +3711,7 @@ func TestUpdateDCToGit(t *testing.T) {
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, fakeResourceConsumption()),
 				ports:                      []corev1.ContainerPort{},
-				componentSettings:          fakeComponentSettings("foo", "foo", "foo", string(util.GIT), "nodejs"),
+				componentSettings:          fakeComponentSettings("foo", "foo", "foo", config.GIT, "nodejs", t),
 				resourceLimits:             corev1.ResourceRequirements{},
 				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				isDeleteSupervisordVolumes: false,
@@ -3730,7 +3731,7 @@ func TestUpdateDCToGit(t *testing.T) {
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, fakeResourceConsumption()),
 				ports:                      []corev1.ContainerPort{},
-				componentSettings:          fakeComponentSettings("foo", "foo", "foo", string(util.GIT), "foo"),
+				componentSettings:          fakeComponentSettings("foo", "foo", "foo", config.GIT, "foo", t),
 				resourceLimits:             corev1.ResourceRequirements{},
 				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				isDeleteSupervisordVolumes: false,
@@ -3750,7 +3751,7 @@ func TestUpdateDCToGit(t *testing.T) {
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, []util.ResourceRequirementInfo{}),
 				ports:                      []corev1.ContainerPort{},
-				componentSettings:          fakeComponentSettings("foo2", "foo", "foo", string(util.GIT), "foo2"),
+				componentSettings:          fakeComponentSettings("foo2", "foo", "foo", config.GIT, "foo2", t),
 				resourceLimits:             corev1.ResourceRequirements{},
 				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				isDeleteSupervisordVolumes: false,
@@ -3770,7 +3771,7 @@ func TestUpdateDCToGit(t *testing.T) {
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 					[]corev1.EnvFromSource{}, []util.ResourceRequirementInfo{}),
 				ports:                      []corev1.ContainerPort{},
-				componentSettings:          fakeComponentSettings("foo", "foo", "foo", string(util.GIT), "foo"),
+				componentSettings:          fakeComponentSettings("foo", "foo", "foo", config.GIT, "foo", t),
 				resourceLimits:             corev1.ResourceRequirements{},
 				envVars:                    []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				isDeleteSupervisordVolumes: false,
@@ -4114,14 +4115,21 @@ func TestDeleteEnvVars(t *testing.T) {
 	}
 }
 
-func fakeComponentSettings(cmpName string, appName string, projectName string, srcType string, cmpType string) config.ComponentSettings {
-	return config.ComponentSettings{
-		ComponentName: &cmpName,
-		App:           &appName,
-		Project:       &projectName,
-		SourceType:    &srcType,
-		ComponentType: &cmpType,
+func fakeComponentSettings(cmpName string, appName string, projectName string, srcType config.SrcType, cmpType string, t *testing.T) config.LocalConfigInfo {
+	lci, err := config.NewLocalConfigInfo("")
+	if err != nil {
+		t.Errorf("failed to init fake component configuration")
+		return *lci
 	}
+	lci.SetComponentSettings(config.ComponentSettings{
+		Name:        &cmpName,
+		Application: &appName,
+		Project:     &projectName,
+		SourceType:  &srcType,
+		Type:        &cmpType,
+	})
+	defer os.Remove(lci.Filename)
+	return *lci
 }
 
 func TestUpdateDCToSupervisor(t *testing.T) {
@@ -4132,7 +4140,7 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 		imageNamespace string
 		isToLocal      bool
 		dc             appsv1.DeploymentConfig
-		cmpSettings    config.ComponentSettings
+		cmpSettings    config.LocalConfigInfo
 		envVars        []corev1.EnvVar
 	}
 	tests := []struct {
@@ -4148,7 +4156,7 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 				imageName:      "nodejs",
 				expectedImage:  "nodejs",
 				imageNamespace: "openshift",
-				cmpSettings:    fakeComponentSettings("foo", "foo", "foo", string(util.LOCAL), "nodejs"),
+				cmpSettings:    fakeComponentSettings("foo", "foo", "foo", config.LOCAL, "nodejs", t),
 				envVars:        []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				isToLocal:      true,
 				dc: *fakeDeploymentConfig("foo", "foo",
@@ -4166,7 +4174,7 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 				expectedImage:  "foobar",
 				imageNamespace: "testing",
 				isToLocal:      false,
-				cmpSettings:    fakeComponentSettings("foo", "foo", "foo", string(util.LOCAL), "nodejs"),
+				cmpSettings:    fakeComponentSettings("foo", "foo", "foo", config.LOCAL, "nodejs", t),
 				envVars:        []corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},
 				dc: *fakeDeploymentConfig("foo", "foo",
 					[]corev1.EnvVar{{Name: "key1", Value: "value1"}, {Name: "key2", Value: "value2"}},

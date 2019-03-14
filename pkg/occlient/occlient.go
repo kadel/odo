@@ -74,7 +74,7 @@ type CreateArgs struct {
 	Name            string
 	SourcePath      string
 	SourceRef       string
-	SourceType      util.CreateType
+	SourceType      config.SrcType
 	ImageName       string
 	EnvVars         []string
 	Ports           []string
@@ -1101,7 +1101,7 @@ func (c *Client) BootstrapSupervisoredS2I(params CreateArgs, commonObjectMeta me
 		},
 	)
 
-	if params.SourceType == util.LOCAL {
+	if params.SourceType == config.LOCAL {
 		inputEnvs = uniqueAppendOrOverwriteEnvVars(
 			inputEnvs,
 			corev1.EnvVar{
@@ -1333,7 +1333,7 @@ func copyVolumesAndVolumeMounts(dc appsv1.DeploymentConfig, currentDC *appsv1.De
 
 // UpdateDCToGit replaces / updates the current DeplomentConfig with the appropriate
 // generated image from BuildConfig as well as the correct DeploymentConfig triggers for Git.
-func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) (err error) {
+func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.LocalConfigInfo, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) (err error) {
 
 	// Fail if blank
 	if imageName == "" {
@@ -1387,12 +1387,13 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 // Returns:
 //	errors if any or nil
 // func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, componentImageType string, isToLocal bool) error {
-func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.ComponentSettings, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) error {
+func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.LocalConfigInfo, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) error {
 	// Retrieve the namespace of the corresponding component image
 	imageStream, err := c.GetImageStream(commonImageMeta.Namespace, commonImageMeta.Name, commonImageMeta.Tag)
 	if err != nil {
 		return errors.Wrap(err, "unable to get image stream for CreateBuildConfig")
 	}
+	commonImageMeta.Namespace = imageStream.ObjectMeta.Namespace
 
 	imageStreamImage, err := c.GetImageStreamImage(imageStream, commonImageMeta.Tag)
 	if err != nil {
@@ -3215,18 +3216,4 @@ func (c *Client) PropagateDeletes(targetPodName string, delSrcRelPaths []string,
 		return err
 	}
 	return err
-}
-
-// GetCreateType returns enum equivalent of passed component source type or error if unsupported type passed
-func GetCreateType(ctStr string) (CreateType, error) {
-	switch strings.ToLower(ctStr) {
-	case string(GIT):
-		return GIT, nil
-	case string(LOCAL):
-		return LOCAL, nil
-	case string(BINARY):
-		return BINARY, nil
-	default:
-		return NONE, fmt.Errorf("Unsupported component source type: %s", ctStr)
-	}
 }
