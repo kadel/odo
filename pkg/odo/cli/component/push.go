@@ -163,10 +163,6 @@ func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
 			os.Exit(1)
 		}
 		log.Successf("Successfully created component %s", *(po.localConfig.ComponentSettings.ComponentName))
-		// after component is successfully created, set it as active
-		log.Successf("Setting component %s as active", *(po.localConfig.ComponentSettings.ComponentName))
-		log.Successf("Component '%s' is now set as active component", *(po.localConfig.ComponentSettings.ComponentName))
-
 	} else {
 		log.Successf("Applying component settings %+v to component: %v", po.localConfig, *(po.localConfig.ComponentSettings.ComponentName))
 		// Apply config
