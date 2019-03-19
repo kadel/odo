@@ -50,6 +50,7 @@ func GetDefaultAppName() (string, error) {
 	return util.GetDNS1123Name(appName), nil
 }
 
+// List all applications in current project
 func List(client *occlient.Client) ([]string, error) {
 	return ListInProject(client)
 }

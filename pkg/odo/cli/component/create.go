@@ -120,8 +120,7 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 		if err != nil {
 			return err
 		}
-		srcLoc := util.GenFileURL(cPath)
-		co.componentSettings.SourceLocation = &srcLoc
+		co.componentSettings.SourceLocation = &cPath
 		cmpSrcType = config.BINARY
 		co.componentSettings.SourceType = &cmpSrcType
 		componentCnt++
@@ -133,8 +132,7 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 	} else {
 		componentCnt++
 		if len(co.componentContext) > 0 {
-			cmpSrcLoc := util.GenFileURL(co.componentContext)
-			co.componentSettings.SourceLocation = &cmpSrcLoc
+			co.componentSettings.SourceLocation = &co.componentContext
 		} else {
 			currDir, err := os.Getwd()
 			if err != nil {

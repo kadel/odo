@@ -105,7 +105,7 @@ func (po *PushOptions) Validate() (err error) {
 	return component.ValidateComponentCreateRequest(po.Context.Client, po.localConfig.GetComponentSettings(), false)
 }
 
-func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
+func (po *PushOptions) createCmpIfNotExistsAndApplyCmpConfig(stdout io.Writer) error {
 	cmpName := po.localConfig.GetName()
 	prjName := po.localConfig.GetProject()
 	appName := po.localConfig.GetApplication()
@@ -148,7 +148,7 @@ func (po *PushOptions) createCmpIfNotExists(stdout io.Writer) error {
 		}
 		log.Successf("Successfully created component %s", cmpName)
 	} else {
-		log.Successf("Applying component settings %+v to component: %v", po.localConfig, cmpName)
+		log.Successf("Applying component settings to component: %v", cmpName)
 		// Apply config
 		err = component.ApplyConfig(po.client, *po.localConfig, po.componentContext, stdout)
 		if err != nil {
@@ -167,7 +167,7 @@ func (po *PushOptions) Run() (err error) {
 	cmpName := po.localConfig.GetName()
 	appName := po.localConfig.GetApplication()
 
-	err = po.createCmpIfNotExists(stdout)
+	err = po.createCmpIfNotExistsAndApplyCmpConfig(stdout)
 	if err != nil {
 		return
 	}

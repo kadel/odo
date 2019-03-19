@@ -3824,7 +3824,19 @@ func TestUpdateDCToGit(t *testing.T) {
 			})
 
 			// Run function UpdateDCToGit
-			err := fakeClient.UpdateDCToGit(metav1.ObjectMeta{Name: tt.args.name}, tt.args.newImage, tt.args.ports, tt.args.componentSettings, tt.args.resourceLimits, tt.args.envVars, tt.args.isDeleteSupervisordVolumes, &(tt.args.dc), tt.args.dc.Spec.Template.Spec.Containers[0], tt.args.dcRollOutWaitCond)
+			err := fakeClient.UpdateDCToGit(UpdateComponentParams{
+				CommonObjectMeta: metav1.ObjectMeta{Name: tt.args.name},
+				ImageMeta: CommonImageMeta{
+					Name:  tt.args.newImage,
+					Ports: tt.args.ports,
+				},
+				ResourceLimits:    tt.args.resourceLimits,
+				EnvVars:           tt.args.envVars,
+				ExistingDC:        &(tt.args.dc),
+				DcRollOutWaitCond: tt.args.dcRollOutWaitCond,
+			},
+				tt.args.isDeleteSupervisordVolumes,
+			)
 
 			// Error checking UpdateDCToGit
 			if !tt.wantErr == (err != nil) {
@@ -4121,14 +4133,17 @@ func fakeComponentSettings(cmpName string, appName string, projectName string, s
 		t.Errorf("failed to init fake component configuration")
 		return *lci
 	}
-	lci.SetComponentSettings(config.ComponentSettings{
+	defer os.Remove(lci.Filename)
+	err = lci.SetComponentSettings(config.ComponentSettings{
 		Name:        &cmpName,
 		Application: &appName,
 		Project:     &projectName,
 		SourceType:  &srcType,
 		Type:        &cmpType,
 	})
-	defer os.Remove(lci.Filename)
+	if err != nil {
+		t.Errorf("failed to set component settings. Error %+v", err)
+	}
 	return *lci
 }
 
@@ -4237,22 +4252,22 @@ func TestUpdateDCToSupervisor(t *testing.T) {
 
 			// Run function UpdateDCToSupervisor
 			err := fakeClient.UpdateDCToSupervisor(
-				metav1.ObjectMeta{Name: tt.args.name},
-				CommonImageMeta{
-					Name:      tt.args.imageName,
-					Tag:       "latest",
-					Namespace: "openshift",
+				UpdateComponentParams{
+					CommonObjectMeta: metav1.ObjectMeta{Name: tt.args.name},
+					ImageMeta: CommonImageMeta{
+						Name:      tt.args.imageName,
+						Tag:       "latest",
+						Namespace: "openshift",
+					},
+					ResourceLimits: corev1.ResourceRequirements{},
+					EnvVars:        tt.args.envVars,
+					ExistingDC:     &(tt.args.dc),
+					DcRollOutWaitCond: func(e *appsv1.DeploymentConfig) bool {
+						return true
+					},
 				},
-				tt.args.cmpSettings,
-				corev1.ResourceRequirements{},
-				tt.args.envVars,
 				tt.args.isToLocal,
 				false,
-				&(tt.args.dc),
-				tt.args.dc.Spec.Template.Spec.Containers[0],
-				func(e *appsv1.DeploymentConfig) bool {
-					return true
-				},
 			)
 
 			// Error checking UpdateDCToSupervisor

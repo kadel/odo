@@ -11,7 +11,6 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/golang/glog"
-	appsv1 "github.com/openshift/api/apps/v1"
 	"github.com/pkg/errors"
 	applabels "github.com/redhat-developer/odo/pkg/application/labels"
 	"github.com/redhat-developer/odo/pkg/catalog"
@@ -436,6 +435,8 @@ func CreateComponent(client *occlient.Client, componentConfig config.LocalConfig
 // Parameters:
 //	componentSettings: Component settings
 //	isCmpExistsCheck: boolean to indicate whether or not error out if component with same name already exists
+// Returns:
+//	errors if any
 func ValidateComponentCreateRequest(client *occlient.Client, componentSettings config.ComponentSettings, isCmpExistsCheck bool) (err error) {
 	// Check manddatory fields are set
 	if componentSettings.Name == nil ||
@@ -487,7 +488,7 @@ func ValidateComponentCreateRequest(client *occlient.Client, componentSettings c
 	if *componentSettings.SourceType == config.LOCAL {
 		srcLocInfo, err := os.Stat(*(componentSettings.SourceLocation))
 		if err != nil {
-			return errors.Wrapf(err, "failed to create component with settings %+v", componentSettings)
+			return errors.Wrap(err, "failed to create component. Please view the settings used using the command `odo config view`")
 		}
 		if !srcLocInfo.IsDir() {
 			return fmt.Errorf("source path for component created for local source needs to be a directory")
@@ -509,9 +510,6 @@ func ApplyConfig(client *occlient.Client, componentConfig config.LocalConfigInfo
 
 	cmpName := componentConfig.GetName()
 	cmpSrcLoc := componentConfig.GetSourceLocation()
-	if err != nil {
-		return err
-	}
 	cmpSrcType := componentConfig.GetSourceType()
 
 	if cmpSrcType == config.GIT {
@@ -794,12 +792,13 @@ func GetComponentSource(client *occlient.Client, componentName string, applicati
 }
 
 // Update updates the requested component
-// componentName is the name of the component to be updated
-// applicationName is the name of the application of the component
-// newSourceType indicates the type of the new source i.e git/local/binary
-// newSource indicates path of the source directory or binary or the git URL
-// stdout is the io writer for streaming build logs on stdout
-//func Update(client *occlient.Client, componentName string, applicationName string, newSourceType string, newSource string, newSourceRef string, stdout io.Writer) error {
+// Parameters:
+//	client: occlient instance
+//	componentSettings: Component configuration
+//	newSource: Location of component source resolved to absolute path
+//	stdout: io pipe to write logs to
+// Returns:
+//	errors if any
 func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, newSource string, stdout io.Writer) error {
 	// STEP 1. Create the common Object Meta for updating.
 
@@ -857,7 +856,6 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 		return errors.Wrapf(err, "unable to get DeploymentConfig %s", commonObjectMeta.Name)
 	}
 
-	// Find the container (don't want to use .Spec.Containers[0] in case the user has modified the DC...)
 	foundCurrentDCContainer, err := occlient.FindContainer(currentDC.Spec.Template.Spec.Containers, commonObjectMeta.Name)
 	if err != nil {
 		return errors.Wrapf(err, "Unable to find container %s", commonObjectMeta.Name)
@@ -884,6 +882,14 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 		resourceLimits = *resLts
 	}
 
+	updateComponentParams := occlient.UpdateComponentParams{
+		CommonObjectMeta:  commonObjectMeta,
+		ImageMeta:         commonImageMeta,
+		ResourceLimits:    resourceLimits,
+		EnvVars:           envVars,
+		DcRollOutWaitCond: occlient.IsDCRolledOut,
+		ExistingDC:        currentDC,
+	}
 	// STEP 2. Determine what the new source is going to be
 
 	glog.V(4).Infof("Updating component %s, from %s to %s (%s).", componentName, oldSourceType, newSource, newSourceType)
@@ -904,20 +910,13 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 
 		// Update / replace the current DeploymentConfig with a Git one (not SupervisorD!)
 		glog.V(4).Infof("Updating the DeploymentConfig %s image to %s", namespacedOpenShiftObject, bc.Spec.Output.To.Name)
+
+		// Update the image for git deployment to the BC built component image
+		updateComponentParams.ImageMeta.Name = bc.Spec.Output.To.Name
+
 		err = client.UpdateDCToGit(
-			commonObjectMeta,
-			bc.Spec.Output.To.Name,
-			commonImageMeta.Ports,
-			componentSettings,
-			resourceLimits,
-			envVars,
+			updateComponentParams,
 			oldSourceType != string(config.GIT),
-			currentDC,
-			foundCurrentDCContainer,
-			func(e *appsv1.DeploymentConfig) bool {
-				return occlient.IsConfigApplied(componentSettings, e) &&
-					occlient.IsDCRolledOut(e)
-			},
 		)
 		if err != nil {
 			return errors.Wrapf(err, "unable to update DeploymentConfig image for %s component", componentName)
@@ -935,6 +934,7 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 		// Update the sourceURL since it is not a local/binary file.
 		sourceURL := util.GenFileURL(newSource)
 		annotations[componentSourceURLAnnotation] = sourceURL
+		updateComponentParams.CommonObjectMeta.Annotations = annotations
 
 		// Need to delete the old BuildConfig
 		err = client.DeleteBuildConfig(commonObjectMeta)
@@ -945,19 +945,9 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 
 		// Update the DeploymentConfig
 		err = client.UpdateDCToSupervisor(
-			commonObjectMeta,
-			commonImageMeta,
-			componentSettings,
-			resourceLimits,
-			envVars,
+			updateComponentParams,
+			newSourceType == config.LOCAL,
 			true,
-			true,
-			currentDC,
-			foundCurrentDCContainer,
-			func(e *appsv1.DeploymentConfig) bool {
-				return (occlient.IsConfigApplied(componentSettings, e) &&
-					occlient.IsDCRolledOut(e))
-			},
 		)
 		if err != nil {
 			return errors.Wrapf(err, "unable to update DeploymentConfig for %s component", componentName)
@@ -982,20 +972,13 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 
 			// Update the current DeploymentConfig with all config applied
 			glog.V(4).Infof("Updating the DeploymentConfig %s image to %s", namespacedOpenShiftObject, bc.Spec.Output.To.Name)
+
+			// Update the image for git deployment to the BC built component image
+			updateComponentParams.ImageMeta.Name = bc.Spec.Output.To.Name
+
 			err = client.UpdateDCToGit(
-				commonObjectMeta,
-				bc.Spec.Output.To.Name,
-				commonImageMeta.Ports,
-				componentSettings,
-				resourceLimits,
-				envVars,
+				updateComponentParams,
 				oldSourceType != string(config.GIT),
-				currentDC,
-				foundCurrentDCContainer,
-				func(e *appsv1.DeploymentConfig) bool {
-					return occlient.IsConfigApplied(componentSettings, e) &&
-						occlient.IsDCRolledOut(e)
-				},
 			)
 			if err != nil {
 				return errors.Wrapf(err, "unable to update DeploymentConfig image for %s component", componentName)
@@ -1009,22 +992,13 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 			// Update the sourceURL
 			sourceURL := util.GenFileURL(newSource)
 			annotations[componentSourceURLAnnotation] = sourceURL
+			updateComponentParams.CommonObjectMeta.Annotations = annotations
 
 			// Update the DeploymentConfig
 			err = client.UpdateDCToSupervisor(
-				commonObjectMeta,
-				commonImageMeta,
-				componentSettings,
-				resourceLimits,
-				envVars,
+				updateComponentParams,
 				newSourceType == config.LOCAL,
 				false,
-				currentDC,
-				foundCurrentDCContainer,
-				func(e *appsv1.DeploymentConfig) bool {
-					return (occlient.IsConfigApplied(componentSettings, e) &&
-						occlient.IsDCRolledOut(e))
-				},
 			)
 			if err != nil {
 				return errors.Wrapf(err, "unable to update DeploymentConfig for %s component", componentName)
