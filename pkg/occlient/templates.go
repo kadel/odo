@@ -19,23 +19,6 @@ type CommonImageMeta struct {
 	Ports     []corev1.ContainerPort
 }
 
-// getComponentBuilderDetails returns builder image details like namespace, and name:version from given dc
-// Parameters:
-//	dc: Existing component dc
-// Returns:
-//	imageNS: namespace of builder image
-//	imageVersionedName: image:version of builder image
-func getComponentBuilderDetails(dc *appsv1.DeploymentConfig) (imageNS string, imageVersionedName string) {
-	triggers := dc.Spec.Triggers
-	for _, trigger := range triggers {
-		if trigger.Type == "ImageChange" {
-			imageNS = trigger.ImageChangeParams.From.Namespace
-			imageVersionedName = trigger.ImageChangeParams.From.Name
-		}
-	}
-	return imageNS, imageVersionedName
-}
-
 // getDeploymentCondition returns the condition with the provided type.
 // Borrowed from // Borrowed from https://github.com/openshift/origin/blob/64349ed036ed14808124c5b4d8538b3856783b54/pkg/oc/originpolymorphichelpers/deploymentconfigs/status.go
 func getDeploymentCondition(status appsv1.DeploymentConfigStatus, condType appsv1.DeploymentConditionType) *appsv1.DeploymentCondition {
