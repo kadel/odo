@@ -2,12 +2,9 @@ package occlient
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/golang/glog"
 	appsv1 "github.com/openshift/api/apps/v1"
 	buildv1 "github.com/openshift/api/build/v1"
-	componentlabels "github.com/redhat-developer/odo/pkg/component/labels"
 	"github.com/redhat-developer/odo/pkg/config"
 	"github.com/redhat-developer/odo/pkg/util"
 	corev1 "k8s.io/api/core/v1"
@@ -22,6 +19,12 @@ type CommonImageMeta struct {
 	Ports     []corev1.ContainerPort
 }
 
+// getComponentBuilderDetails returns builder image details like namespace, and name:version from given dc
+// Parameters:
+//	dc: Existing component dc
+// Returns:
+//	imageNS: namespace of builder image
+//	imageVersionedName: image:version of builder image
 func getComponentBuilderDetails(dc *appsv1.DeploymentConfig) (imageNS string, imageVersionedName string) {
 	triggers := dc.Spec.Triggers
 	for _, trigger := range triggers {
@@ -31,18 +34,6 @@ func getComponentBuilderDetails(dc *appsv1.DeploymentConfig) (imageNS string, im
 		}
 	}
 	return imageNS, imageVersionedName
-}
-
-func resolveComponentType(imageName string) string {
-	//TODO: Add imageNS resoution
-	// Resolve default version
-	if !strings.Contains(imageName, ":") {
-		imageName = fmt.Sprintf("%s:latest", imageName)
-	}
-	if strings.Contains(imageName, "/") {
-		return strings.Split(imageName, "/")[1]
-	}
-	return imageName
 }
 
 // getDeploymentCondition returns the condition with the provided type.
@@ -88,51 +79,14 @@ func IsDCRolledOut(config *appsv1.DeploymentConfig) bool {
 	return false
 }
 
-func IsConfigApplied(componentConfig config.LocalConfigInfo, dc *appsv1.DeploymentConfig) (isConfApplied bool) {
-	/*
-		TODO: Add checks for updation of:
-		* ref
-		* ports
-		* path
-	*/
-
-	cfgAppName := componentConfig.GetApplication()
-	cfgCmpName := componentConfig.GetName()
-	cfgSrcType := string(componentConfig.GetSourceType())
-	cfgMinCpu := componentConfig.GetMinCPU()
-	cfgMaxCpu := componentConfig.GetMaxCPU()
-	cfgMinMemory := componentConfig.GetMinMemory()
-	cfgMaxMemory := componentConfig.GetMaxMemory()
-	cfgCmpType := componentConfig.GetType()
-	cfgProject := componentConfig.GetProject()
-
-	_, cmpBuilderImgVersionedName := getComponentBuilderDetails(dc)
-	cmpContainer, err := FindContainer(dc.Spec.Template.Spec.Containers, dc.Name)
-	if err != nil {
-		glog.V(4).Infof("Container with name %s not found in passed dc", dc.Name)
-		return false
-	}
-	isConfApplied = (
-	// TODO: Use the  label exported in pkg/application/labels/labels.go but defer it for now so as to defer the cyclic dependency to a new PR
-	dc.Labels["app.kubernetes.io/name"] == cfgAppName &&
-		cmpBuilderImgVersionedName == resolveComponentType(cfgCmpType) &&
-		dc.Labels[componentlabels.ComponentLabel] == cfgCmpName &&
-		dc.Namespace == cfgProject &&
-		// TODO: Use the  label exported in pkg/component/component.go but defer it for now so as to defer the cyclic dependency to a new PR
-		dc.Annotations["app.kubernetes.io/component-source-type"] == string(cfgSrcType))
-	if (cfgMinCpu != "") && (cfgMaxCpu != "") {
-		cpuExpected := util.FetchResourceQuantity(corev1.ResourceCPU, cfgMinCpu, cfgMaxCpu, "")
-		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Cpu().Cmp(cpuExpected.MaxQty) == 0)
-		isConfApplied = isConfApplied && (cmpContainer.Resources.Requests.Cpu().Cmp(cpuExpected.MinQty) == 0)
-	}
-	if (cfgMinMemory != "") && (cfgMaxMemory != "") {
-		memoryExpected := util.FetchResourceQuantity(corev1.ResourceMemory, cfgMinMemory, cfgMaxMemory, "")
-		isConfApplied = isConfApplied && (cmpContainer.Resources.Limits.Memory().Cmp(memoryExpected.MaxQty) == 0)
-		isConfApplied = isConfApplied && (cmpContainer.Resources.Requests.Memory().Cmp(memoryExpected.MinQty) == 0)
-	}
-	return
-}
-
+// generateSupervisordDeploymentConfig generates dc for local and binary components
+// Parameters:
+//	commonObjectMeta: Contains annotations and labels for dc
+//	commonImageMeta: Contains details like image NS, name, tag and ports to be exposed
+//	envVar: env vars to be exposed
+//	resourceRequirements: Container cpu and memory resource requirements
+// Returns:
+//	deployment config generated using above parameters
 func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta,
 	envVar []corev1.EnvVar, envFrom []corev1.EnvFromSource, resourceRequirements *corev1.ResourceRequirements) appsv1.DeploymentConfig {
 
@@ -242,10 +196,20 @@ func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, com
 	return dc
 }
 
+// FetchContainerResourceLimits returns cpu and memory resource limits of the component container from the passed dc
+// Parameter:
+//	container: Component container
+// Returns:
+//	resource limits from passed component container
 func FetchContainerResourceLimits(container corev1.Container) corev1.ResourceRequirements {
 	return container.Resources
 }
 
+// GetResourceRequirementsFromCmpSettings converts the cpu and memory request info from component configuration into format usable in dc
+// Parameters:
+//	cfg: Compoennt configuration/settings
+// Returns:
+//	*corev1.ResourceRequirements: component configuration converted into format usable in dc
 func GetResourceRequirementsFromCmpSettings(cfg config.LocalConfigInfo) *corev1.ResourceRequirements {
 	var resReq []util.ResourceRequirementInfo
 

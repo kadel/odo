@@ -167,6 +167,22 @@ type S2IPaths struct {
 	BuilderImgName      string
 }
 
+// UpdateComponentParams serves the purpose of holding the arguements to a component update request
+type UpdateComponentParams struct {
+	// CommonObjectMeta is the object meta containing the labels and annotations expected for the new deployment
+	CommonObjectMeta metav1.ObjectMeta
+	// ResourceLimits are the cpu and memory constraints to be applied on to the component
+	ResourceLimits corev1.ResourceRequirements
+	// EnvVars to be exposed
+	EnvVars []corev1.EnvVar
+	// ExistingDC is the dc of the existing component that is requested for an update
+	ExistingDC *appsv1.DeploymentConfig
+	// DcRollOutWaitCond holds the logic to wait for dc with requested updates to be applied
+	DcRollOutWaitCond dcRollOutWait
+	// ImageMeta describes the image to be used in dc(builder image for local/binary and built component image for git deployments)
+	ImageMeta CommonImageMeta
+}
+
 // S2IDeploymentsDir is a set of possible S2I labels that provides S2I deployments directory
 // This label is not uniform across different builder images. This slice is expected to grow as odo adds support to more component types and/or the respective builder images use different labels
 var S2IDeploymentsDir = []string{
@@ -1333,46 +1349,50 @@ func copyVolumesAndVolumeMounts(dc appsv1.DeploymentConfig, currentDC *appsv1.De
 
 // UpdateDCToGit replaces / updates the current DeplomentConfig with the appropriate
 // generated image from BuildConfig as well as the correct DeploymentConfig triggers for Git.
-func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName string, ports []corev1.ContainerPort, componentSettings config.LocalConfigInfo, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isDeleteSupervisordVolumes bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) (err error) {
+func (c *Client) UpdateDCToGit(ucp UpdateComponentParams, isDeleteSupervisordVolumes bool) (err error) {
+
+	// Find the container (don't want to use .Spec.Containers[0] in case the user has modified the DC...)
+	existingCmpContainer, err := FindContainer(ucp.ExistingDC.Spec.Template.Spec.Containers, ucp.CommonObjectMeta.Name)
+	if err != nil {
+		return errors.Wrapf(err, "Unable to find container %s", ucp.CommonObjectMeta.Name)
+	}
 
 	// Fail if blank
-	if imageName == "" {
+	if ucp.ImageMeta.Name == "" {
 		return errors.New("UpdateDCToGit imageName cannot be blank")
 	}
 
-	dc := generateGitDeploymentConfig(commonObjectMeta, imageName, ports, envVars, &resourceLimits)
+	dc := generateGitDeploymentConfig(ucp.CommonObjectMeta, ucp.ImageMeta.Name, ucp.ImageMeta.Ports, ucp.EnvVars, &ucp.ResourceLimits)
 
 	if isDeleteSupervisordVolumes {
 		// Patch the current DC
 		err = c.PatchCurrentDC(
-			commonObjectMeta.Name,
+			ucp.CommonObjectMeta.Name,
 			dc,
 			removeTracesOfSupervisordFromDC,
-			func(e *appsv1.DeploymentConfig) bool {
-				return e.Annotations["app.kubernetes.io/component-source-type"] == dc.ObjectMeta.Annotations["app.kubernetes.io/component-source-type"]
-			},
-			existingDC,
+			ucp.DcRollOutWaitCond,
+			ucp.ExistingDC,
 			existingCmpContainer,
 		)
 	} else {
 		err = c.PatchCurrentDC(
-			commonObjectMeta.Name,
+			ucp.CommonObjectMeta.Name,
 			dc,
 			nil,
-			dcRollOutWaitCond,
-			existingDC,
+			ucp.DcRollOutWaitCond,
+			ucp.ExistingDC,
 			existingCmpContainer,
 		)
 	}
 	if err != nil {
-		return errors.Wrapf(err, "unable to update the current DeploymentConfig %s", commonObjectMeta.Name)
+		return errors.Wrapf(err, "unable to update the current DeploymentConfig %s", ucp.CommonObjectMeta.Name)
 	}
 
 	if isDeleteSupervisordVolumes {
 		// Cleanup after the supervisor
-		err = c.DeletePVC(getAppRootVolumeName(commonObjectMeta.Name))
+		err = c.DeletePVC(getAppRootVolumeName(ucp.CommonObjectMeta.Name))
 		if err != nil {
-			return errors.Wrapf(err, "unable to delete S2I data PVC from %s", commonObjectMeta.Name)
+			return errors.Wrapf(err, "unable to delete S2I data PVC from %s", ucp.CommonObjectMeta.Name)
 		}
 	}
 
@@ -1386,16 +1406,20 @@ func (c *Client) UpdateDCToGit(commonObjectMeta metav1.ObjectMeta, imageName str
 //	isToLocal: bool used to indicate if component is to be updated to local in which case a source backup dir will be injected into compoennt env
 // Returns:
 //	errors if any or nil
-// func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, componentImageType string, isToLocal bool) error {
-func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, commonImageMeta CommonImageMeta, componentSettings config.LocalConfigInfo, resourceLimits corev1.ResourceRequirements, envVars []corev1.EnvVar, isToLocal bool, isCreatePVC bool, existingDC *appsv1.DeploymentConfig, existingCmpContainer corev1.Container, dcRollOutWaitCond dcRollOutWait) error {
+func (c *Client) UpdateDCToSupervisor(ucp UpdateComponentParams, isToLocal bool, isCreatePVC bool) error {
+	existingCmpContainer, err := FindContainer(ucp.ExistingDC.Spec.Template.Spec.Containers, ucp.CommonObjectMeta.Name)
+	if err != nil {
+		return errors.Wrapf(err, "Unable to find container %s", ucp.CommonObjectMeta.Name)
+	}
+
 	// Retrieve the namespace of the corresponding component image
-	imageStream, err := c.GetImageStream(commonImageMeta.Namespace, commonImageMeta.Name, commonImageMeta.Tag)
+	imageStream, err := c.GetImageStream(ucp.ImageMeta.Namespace, ucp.ImageMeta.Name, ucp.ImageMeta.Tag)
 	if err != nil {
 		return errors.Wrap(err, "unable to get image stream for CreateBuildConfig")
 	}
-	commonImageMeta.Namespace = imageStream.ObjectMeta.Namespace
+	ucp.ImageMeta.Namespace = imageStream.ObjectMeta.Namespace
 
-	imageStreamImage, err := c.GetImageStreamImage(imageStream, commonImageMeta.Tag)
+	imageStreamImage, err := c.GetImageStreamImage(imageStream, ucp.ImageMeta.Tag)
 	if err != nil {
 		return errors.Wrap(err, "unable to bootstrap supervisord")
 	}
@@ -1407,7 +1431,7 @@ func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, common
 
 	// Append s2i related parameters extracted above to env
 	inputEnvs := uniqueAppendOrOverwriteEnvVars(
-		envVars,
+		ucp.EnvVars,
 		corev1.EnvVar{
 			Name:  EnvS2IScriptsURL,
 			Value: s2iPaths.ScriptsPath,
@@ -1452,38 +1476,38 @@ func (c *Client) UpdateDCToSupervisor(commonObjectMeta metav1.ObjectMeta, common
 
 	// Generate the SupervisorD Config
 	dc := generateSupervisordDeploymentConfig(
-		commonObjectMeta,
-		commonImageMeta,
+		ucp.CommonObjectMeta,
+		ucp.ImageMeta,
 		inputEnvs,
 		[]corev1.EnvFromSource{},
-		&resourceLimits,
+		&ucp.ResourceLimits,
 	)
 
 	// Add the appropriate bootstrap volumes for SupervisorD
-	addBootstrapVolumeCopyInitContainer(&dc, commonObjectMeta.Name)
-	addBootstrapSupervisordInitContainer(&dc, commonObjectMeta.Name)
-	addBootstrapVolume(&dc, commonObjectMeta.Name)
-	addBootstrapVolumeMount(&dc, commonObjectMeta.Name)
+	addBootstrapVolumeCopyInitContainer(&dc, ucp.CommonObjectMeta.Name)
+	addBootstrapSupervisordInitContainer(&dc, ucp.CommonObjectMeta.Name)
+	addBootstrapVolume(&dc, ucp.CommonObjectMeta.Name)
+	addBootstrapVolumeMount(&dc, ucp.CommonObjectMeta.Name)
 
 	if isCreatePVC {
 		// Setup PVC
-		_, err = c.CreatePVC(getAppRootVolumeName(commonObjectMeta.Name), "1Gi", commonObjectMeta.Labels)
+		_, err = c.CreatePVC(getAppRootVolumeName(ucp.CommonObjectMeta.Name), "1Gi", ucp.CommonObjectMeta.Labels)
 		if err != nil {
-			return errors.Wrapf(err, "unable to create PVC for %s", commonObjectMeta.Name)
+			return errors.Wrapf(err, "unable to create PVC for %s", ucp.CommonObjectMeta.Name)
 		}
 	}
 
 	// Patch the current DC with the new one
 	err = c.PatchCurrentDC(
-		commonObjectMeta.Name,
+		ucp.CommonObjectMeta.Name,
 		dc,
 		nil,
-		dcRollOutWaitCond,
-		existingDC,
+		ucp.DcRollOutWaitCond,
+		ucp.ExistingDC,
 		existingCmpContainer,
 	)
 	if err != nil {
-		return errors.Wrapf(err, "unable to update the current DeploymentConfig %s", commonObjectMeta.Name)
+		return errors.Wrapf(err, "unable to update the current DeploymentConfig %s", ucp.CommonObjectMeta.Name)
 	}
 
 	return nil
@@ -1622,7 +1646,12 @@ func (c *Client) WaitForBuildToFinish(buildName string) error {
 }
 
 // WaitAndGetDC block and waits until the DeploymentConfig has updated it's annotation
-// It will *wait* until "value" is expected within the DeploymentConfig.
+// Parameters:
+//	name: Name of DC
+//	timeout: Interval of time.Duration to wait for before timing out waiting for its rollout
+//	waitCond: Function indicating when to consider dc rolled out
+// Returns:
+//	Updated DC and errors if any
 func (c *Client) WaitAndGetDC(name string, timeout time.Duration, waitCond func(*appsv1.DeploymentConfig) bool) (*appsv1.DeploymentConfig, error) {
 
 	w, err := c.appsClient.DeploymentConfigs(c.Namespace).Watch(metav1.ListOptions{
