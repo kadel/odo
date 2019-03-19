@@ -138,7 +138,6 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 			if err != nil {
 				return errors.Wrap(err, "failed to set component source location. Please pass a valid path")
 			}
-			currDir = util.GenFileURL(co.componentContext)
 			co.componentSettings.SourceLocation = &currDir
 		}
 	}
