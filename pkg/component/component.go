@@ -352,10 +352,6 @@ func CreateComponent(client *occlient.Client, componentConfig config.LocalConfig
 	cmpType := componentConfig.GetType()
 	cmpSrcType := componentConfig.GetSourceType()
 	cmpPorts := componentConfig.GetPorts()
-	cmpMinCPU := componentConfig.GetMinCPU()
-	cmpMaxCPU := componentConfig.GetMaxCPU()
-	cmpMinMemory := componentConfig.GetMinMemory()
-	cmpMaxMemory := componentConfig.GetMaxMemory()
 	cmpSrcRef := componentConfig.GetRef()
 	appName := componentConfig.GetApplication()
 
@@ -372,18 +368,11 @@ func CreateComponent(client *occlient.Client, componentConfig config.LocalConfig
 		createArgs.Ports = cmpPorts
 	}
 
-	if cmpMaxCPU != "" && cmpMinCPU != "" {
-		createArgs.Resources = append(
-			createArgs.Resources,
-			*(util.FetchResourceQuantity(corev1.ResourceCPU, cmpMinCPU, cmpMaxCPU, "")),
-		)
+	createArgs.Resources, err = occlient.GetResourceRequirementsFromCmpSettings(componentConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create component")
 	}
-	if cmpMaxMemory != "" && cmpMinMemory != "" {
-		createArgs.Resources = append(
-			createArgs.Resources,
-			*(util.FetchResourceQuantity(corev1.ResourceMemory, cmpMinMemory, cmpMaxMemory, "")),
-		)
-	}
+
 	switch cmpSrcType {
 	case config.GIT:
 		// Use Git
@@ -878,7 +867,11 @@ func Update(client *occlient.Client, componentSettings config.LocalConfigInfo, n
 
 	// Generate the new DeploymentConfig
 	resourceLimits := occlient.FetchContainerResourceLimits(foundCurrentDCContainer)
-	if resLts := occlient.GetResourceRequirementsFromCmpSettings(componentSettings); resLts != nil {
+	resLts, err := occlient.GetResourceRequirementsFromCmpSettings(componentSettings)
+	if err != nil {
+		return errors.Wrap(err, "failed to update component")
+	}
+	if resLts != nil {
 		resourceLimits = *resLts
 	}
 

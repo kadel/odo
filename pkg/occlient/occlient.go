@@ -78,7 +78,7 @@ type CreateArgs struct {
 	ImageName       string
 	EnvVars         []string
 	Ports           []string
-	Resources       []util.ResourceRequirementInfo
+	Resources       *corev1.ResourceRequirements
 	ApplicationName string
 	Wait            bool
 }
@@ -829,7 +829,7 @@ func (c *Client) NewAppS2I(params CreateArgs, commonObjectMeta metav1.ObjectMeta
 	}
 
 	// Generate and create the DeploymentConfig
-	dc := generateGitDeploymentConfig(commonObjectMeta, buildConfig.Spec.Output.To.Name, containerPorts, inputEnvVars, getResourceRequirementsFromRawData(params.Resources))
+	dc := generateGitDeploymentConfig(commonObjectMeta, buildConfig.Spec.Output.To.Name, containerPorts, inputEnvVars, params.Resources)
 	_, err = c.appsClient.DeploymentConfigs(c.Namespace).Create(&dc)
 	if err != nil {
 		return errors.Wrapf(err, "unable to create DeploymentConfig for %s", commonObjectMeta.Name)
@@ -1133,7 +1133,7 @@ func (c *Client) BootstrapSupervisoredS2I(params CreateArgs, commonObjectMeta me
 		commonImageMeta,
 		inputEnvs,
 		[]corev1.EnvFromSource{},
-		getResourceRequirementsFromRawData(params.Resources),
+		params.Resources,
 	)
 
 	// Add the appropriate bootstrap volumes for SupervisorD
