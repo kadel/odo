@@ -60,8 +60,7 @@ func NewCmdComponent(name, fullName string) *cobra.Command {
 		Short: "Components of an application",
 		Example: fmt.Sprintf("%s\n%s\n\n  See sub-commands individually for more examples",
 			fullName, CreateRecommendedCommandName),
-		// 'odo component' is the same as 'odo component get'
-		// 'odo component <component_name>' is the same as 'odo component set <component_name>'
+		// `odo component set/get` and `odo get/set` are respectively deprecated as per the new workflow
 		Run: func(cmd *cobra.Command, args []string) {
 		},
 	}
