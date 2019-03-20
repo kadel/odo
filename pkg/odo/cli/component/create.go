@@ -185,18 +185,12 @@ func (co *CreateOptions) setCmpName(args []string) (err error) {
 }
 
 func createDefaultComponentName(context *genericclioptions.Context, componentType string, sourceType config.SrcType, sourcePath string) (string, error) {
-	// Fetch list of existing components in-order to attempt generation of unique component name
-	componentList, err := component.List(context.Client, context.Application)
-	if err != nil {
-		return "", err
-	}
-
 	// Retrieve the componentName, if the componentName isn't specified, we will use the default image name
 	componentName, err := component.GetDefaultComponentName(
 		sourcePath,
 		sourceType,
 		componentType,
-		componentList,
+		component.ComponentList{},
 	)
 
 	if err != nil {
@@ -282,10 +276,13 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 			co.componentSettings.Ref = &selectedGitRef
 		} else if selectedSourceType == config.LOCAL {
 			if len(co.componentContext) > 0 {
-				co.componentContext = util.GenFileURL(co.componentContext)
+				co.componentContext, err = util.GetAbsPath(co.componentContext)
+				if err != nil {
+					return errors.Wrap(err, "failed to create component config")
+				}
 				co.componentSettings.SourceLocation = &(co.componentContext)
 			} else {
-				co.componentContext = util.GenFileURL(currentDirectory)
+				co.componentContext = currentDirectory
 				co.componentSettings.SourceLocation = &currentDirectory
 			}
 		}
@@ -295,6 +292,13 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 			return err
 		}
 		componentName := ui.EnterComponentName(defaultComponentName, co.Context)
+
+		appName := ui.EnterOpenshiftName(co.Context.Application, "Which application do you want the commponent to be associated with", co.Context)
+		co.componentSettings.Application = &appName
+
+		projectName := ui.EnterOpenshiftName(co.Context.Project, "Which project go you want the component to be created in", co.Context)
+		co.componentSettings.Project = &projectName
+
 		co.componentSettings.Name = &componentName
 
 		if commonui.Proceed("Do you wish to set advanced options") {
@@ -344,7 +348,7 @@ func (co *CreateOptions) Complete(name string, cmd *cobra.Command, args []string
 
 // Validate validates the create parameters
 func (co *CreateOptions) Validate() (err error) {
-	return component.ValidateComponentCreateRequest(co.Context.Client, co.componentSettings, true)
+	return component.ValidateComponentCreateRequest(co.Context.Client, co.componentSettings, false)
 }
 
 // Run has the logic to perform the required actions as part of command
