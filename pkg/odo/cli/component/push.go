@@ -83,7 +83,7 @@ func (po *PushOptions) Complete(name string, cmd *cobra.Command, args []string) 
 			return errors.Wrapf(err, "unable to parse source %s from component %s", po.sourcePath, cmpName)
 		}
 
-		if u.Scheme != "" && u.Scheme != "file" {
+		if u.Scheme != "file" {
 			return fmt.Errorf("Component %s has invalid source path %s", cmpName, u.Scheme)
 		}
 		po.sourcePath = util.ReadFilePath(u, runtime.GOOS)
