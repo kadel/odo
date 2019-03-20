@@ -137,6 +137,18 @@ func EnterComponentName(defaultName string, context *genericclioptions.Context) 
 	return path
 }
 
+// EnterOpenshiftName allows the user to specify the app name in a prompt
+func EnterOpenshiftName(defaultName string, message string, context *genericclioptions.Context) string {
+	var name string
+	prompt := &survey.Input{
+		Message: message,
+		Default: defaultName,
+	}
+	err := survey.AskOne(prompt, &name, validation.NameValidator)
+	ui.HandleError(err)
+	return name
+}
+
 // EnterGitInfo will display two prompts, one of the URL of the project and one of the ref
 func EnterGitInfo() (string, string) {
 	gitURL := enterGitInputTypePath()
