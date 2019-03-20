@@ -37,8 +37,7 @@ func Create(client *occlient.Client, projectName string, wait bool) error {
 	return nil
 }
 
-// Delete deletes the project with name projectName and sets any other remaining project as the current project
-// and returns the current project or "" if no current project is set and errors if any
+// Delete deletes the project with name projectName and returns errors if any
 func Delete(client *occlient.Client, projectName string) error {
 	// Loading spinner
 	s := log.Spinnerf("Deleting project %s", projectName)
