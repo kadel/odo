@@ -37,7 +37,7 @@ var pushCmdExample = ktemplates.Examples(`  # Push source code to the current co
 %[1]s
 
 # Push source code in ~/mycode to component called my-component
-%[1]s my-component --local ~/mycode
+%[1]s my-component --context ~/mycode
   `)
 
 // PushRecommendedCommandName is the recommended push command name

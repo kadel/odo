@@ -67,10 +67,10 @@ var createExample = ktemplates.Examples(`  # Create new Node.js component with t
 %[1]s nodejs:latest
 
 # Create new Node.js component named 'frontend' with the source in './frontend' directory
-%[1]s nodejs frontend --local ./frontend
+%[1]s nodejs frontend --context ./frontend
 
 # Create a new Node.js component of version 6 from the 'openshift' namespace
-%[1]s openshift/nodejs:6 --local /nodejs-ex
+%[1]s openshift/nodejs:6 --context /nodejs-ex
 
 # Create new Wildfly component with binary named sample.war in './downloads' directory
 %[1]s wildfly wildly --binary ./downloads/sample.war
@@ -132,6 +132,10 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 	} else {
 		componentCnt++
 		if len(co.componentContext) > 0 {
+			co.componentContext, err = util.GetAbsPath(co.componentContext)
+			if err != nil {
+				return errors.Wrapf(err, "please provide the context relative to your current directory")
+			}
 			co.componentSettings.SourceLocation = &co.componentContext
 		} else {
 			currDir, err := os.Getwd()
