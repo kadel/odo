@@ -57,6 +57,16 @@ func VerifyCmpName(cmpName string, appName string) {
 	Expect(session).To(ContainSubstring(cmpName))
 }
 
+func GetURL(contextDir string) string {
+	var url string
+	currDir := runCmdShouldPass("pwd")
+	currDir = strings.TrimSpace(currDir)
+	runCmdShouldPass("cd " + contextDir)
+	url = determineRouteURL()
+	runCmdShouldPass("cd " + currDir)
+	return url
+}
+
 var _ = Describe("odoe2e", func() {
 	projName := generateTimeBasedName("odo")
 	const appTestName = "testing"
@@ -82,7 +92,8 @@ var _ = Describe("odoe2e", func() {
 
 			It("Should fail if user tries to create anything other than project", func() {
 				runCmdShouldPass(fmt.Sprintf("odo login -u %s -p %s", "odonoprojectattemptscreate", loginTestUserPassword))
-				session := runCmdShouldFail("odo create nodejs")
+				session := runCmdShouldPass("odo create nodejs --project prj2 ")
+				session = runCmdShouldFail("odo push")
 				Expect(session).To(ContainSubstring("deploymentconfigs.apps.openshift.io is forbidden: User \"odonoprojectattemptscreate\" cannot list deploymentconfigs.apps.openshift.io in the namespace \"default\": no RBAC policy matched"))
 				session = runCmdShouldFail("odo component create nodejs")
 				Expect(session).To(ContainSubstring("User \"odonoprojectattemptscreate\" cannot list deploymentconfigs.apps.openshift.io in the namespace \"default\""))
@@ -151,6 +162,8 @@ var _ = Describe("odoe2e", func() {
 	// TODO: Create component without creating application
 	Context("odo project", func() {
 		It("should create a new project", func() {
+			loginOutput := runCmdShouldPass("odo login --username developer --password developer")
+			Expect(loginOutput).To(ContainSubstring("Login successful"))
 			session := runCmdShouldPass("odo project create " + projName)
 			Expect(session).To(ContainSubstring(projName))
 		})
@@ -430,31 +443,32 @@ var _ = Describe("odoe2e", func() {
 			})
 
 			It("should be able to create multiple components within the same application", func() {
-				runCmdShouldPass("odo create php php")
+				runCmdShouldPass("odo create php php --git " + testPHPGitURL + " --app " + appTestName)
+				runCmdShouldPass("odo push")
 			})
 
 			It("should list the newly created second component", func() {
-				cmpList := runCmdShouldPass("odo list")
-				Expect(cmpList).To(ContainSubstring("php"))
+				// Uncomment below after --context is added to odo list
+				//cmpList := runCmdShouldPass("odo list")
+				//Expect(cmpList).To(ContainSubstring("php"))
+				VerifyCmpName("php", appTestName)
 			})
 
 			It("should get the application "+appTestName, func() {
-				appGet := runCmdShouldPass("odo app get --short")
-				Expect(appGet).To(Equal(appTestName))
+				VerifyAppNameOfComponent("php", appTestName)
 			})
 
-			It("should be able to set a component as active", func() {
-				cmpSet := runCmdShouldPass(fmt.Sprintf("odo component set %s", autoGenNodeJSCompName))
-				Expect(cmpSet).To(ContainSubstring(autoGenNodeJSCompName))
-			})
-
-			It("should be able to retrieve logs", func() {
-				runCmdShouldPass("odo log")
-				runCmdShouldPass(fmt.Sprintf("odo log %s", autoGenNodeJSCompName))
-			})
+			// Uncomment below tests after odo logs is fixed as per new workflow
+			/*
+				It("should be able to retrieve logs", func() {
+					runCmdShouldPass("odo log")
+					runCmdShouldPass(fmt.Sprintf("odo log %s", autoGenNodeJSCompName))
+				})
+			*/
 
 			It("should be able to create git component with required ports", func() {
 				runCmdShouldPass("odo create nodejs nodejs-git --git https://github.com/openshift/nodejs-ex --port 8080/tcp,9100/udp")
+				runCmdShouldPass("odo push")
 
 				// checking port names
 				portsNames := runCmdShouldPass("oc get services nodejs-git-" + appTestName + " -o go-template='{{range .spec.ports}}{{.name}}{{end}}'")
@@ -472,7 +486,7 @@ var _ = Describe("odoe2e", func() {
 				Expect(protocols).To(ContainSubstring("UDP"))
 
 				// deleting the component
-				runCmdShouldPass("odo delete -f")
+				runCmdShouldPass("odo delete -f nodejs-git")
 
 				getCmp := runCmdShouldPass("odo list")
 				Expect(getCmp).NotTo(ContainSubstring("nodejs-git"))
@@ -490,7 +504,7 @@ var _ = Describe("odoe2e", func() {
 				Expect(envVars).To(Equal("keyvaluekey1value1"))
 
 				// deleting the component
-				runCmdShouldPass("odo delete -f")
+				runCmdShouldPass("odo delete -f nodejs-git")
 			})
 		})
 	})
@@ -550,10 +564,11 @@ var _ = Describe("odoe2e", func() {
 	Describe("pushing updates", func() {
 		Context("When push is made", func() {
 			It("should push the changes", func() {
-				// Switch to nodejs component
-				runCmdShouldPass("odo component set nodejs")
+				runCmdShouldPass("odo create nodejs --context " + tmpDir + "/nodejs-ex")
+				runCmdShouldPass("odo push --context " + tmpDir + "/nodejs-ex")
 
-				getRoute := determineRouteURL()
+				getRoute := GetURL(tmpDir + "/nodejs-ex")
+
 				responseStringMatchStatus := matchResponseSubString(getRoute, "Welcome to your Node.js application on OpenShift", 30, 1)
 				Expect(responseStringMatchStatus).Should(BeTrue())
 
@@ -569,6 +584,7 @@ var _ = Describe("odoe2e", func() {
 				Expect(responseChangeStringStatus).Should(BeTrue())
 			})
 
+			/* Uncomment once url commands work with new workflow and context
 			It("should be able to create the url with same name in different application", func() {
 				appTestName_new := appTestName + "-1"
 				runCmdShouldPass("odo create nodejs nodejs-1 --git https://github.com/sclorg/nodejs-ex --app " + appTestName_new)
@@ -595,6 +611,7 @@ var _ = Describe("odoe2e", func() {
 				runCmdShouldPass("odo delete -f")
 				runCmdShouldPass("odo app delete " + appTestName_new + " -f")
 			})
+			*/
 
 		})
 	})
@@ -709,6 +726,7 @@ var _ = Describe("odoe2e", func() {
 	Context("deploying a component with a specific image name", func() {
 		It("should deploy the component", func() {
 			runCmdShouldPass("odo create nodejs:latest testversioncmp")
+			runCmdShouldPass("odo push")
 		})
 
 		It("should delete the deployed image-specific component", func() {
@@ -717,14 +735,16 @@ var _ = Describe("odoe2e", func() {
 	})
 
 	Context("deleting the application", func() {
-		// Check if url is deleted
-		It("should be able to delete the url added to the component", func() {
-			runCmdShouldPass("odo component set nodejs")
-			runCmdShouldPass("odo url delete nodejs -f")
+		/*
+			// Check if url is deleted
+			It("should be able to delete the url added to the component", func() {
+				runCmdShouldPass("odo component set nodejs")
+				runCmdShouldPass("odo url delete nodejs -f")
 
-			urlList := getActiveElementFromCommandOutput("odo url list")
-			Expect(urlList).NotTo(ContainSubstring("nodejs"))
-		})
+				urlList := getActiveElementFromCommandOutput("odo url list")
+				Expect(urlList).NotTo(ContainSubstring("nodejs"))
+			})
+		*/
 
 		It("should delete application and component", func() {
 
@@ -733,7 +753,7 @@ var _ = Describe("odoe2e", func() {
 			appList := runCmdShouldPass("odo app list")
 			Expect(appList).NotTo(ContainSubstring(appTestName))
 
-			cmpList := runCmdShouldPass("odo list")
+			cmpList := runCmdShouldPass("odo list --app " + appTestName)
 			Expect(cmpList).NotTo(ContainSubstring("nodejs"))
 
 			odoDeleteProject(projName)
