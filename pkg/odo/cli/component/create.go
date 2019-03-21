@@ -116,11 +116,7 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 	co.componentSettings.Application = &(co.Context.Application)
 
 	if len(co.componentBinary) != 0 {
-		cPath, err := util.GetAbsPath(co.componentBinary)
-		if err != nil {
-			return err
-		}
-		co.componentSettings.SourceLocation = &cPath
+		co.componentSettings.SourceLocation = &co.componentBinary
 		cmpSrcType = config.BINARY
 		co.componentSettings.SourceType = &cmpSrcType
 		componentCnt++
@@ -136,13 +132,11 @@ func (co *CreateOptions) setCmpSourceAttrs() (err error) {
 			if err != nil {
 				return errors.Wrapf(err, "please provide the context relative to your current directory")
 			}
-			co.componentSettings.SourceLocation = &co.componentContext
+			// assume that source is always located in the context dir (where .odo directory is)
+			currentDir := "./"
+			co.componentSettings.SourceLocation = &currentDir
 		} else {
-			currDir, err := os.Getwd()
-			if err != nil {
-				return errors.Wrap(err, "failed to set component source location. Please pass a valid path")
-			}
-			co.componentSettings.SourceLocation = &currDir
+			return fmt.Errorf("context (--context) can't be empty")
 		}
 	}
 
@@ -405,10 +399,10 @@ func NewCmdCreate(name, fullName string) *cobra.Command {
 			genericclioptions.GenericRun(co, cmd, args)
 		},
 	}
-	componentCreateCmd.Flags().StringVarP(&co.componentBinary, "binary", "b", "", "Use a binary as the source file for the component")
+	componentCreateCmd.Flags().StringVarP(&co.componentBinary, "binary", "b", "", "Use a binary as the source file for the component. Must be specified as a relative path in the context directory.")
 	componentCreateCmd.Flags().StringVarP(&co.componentGit, "git", "g", "", "Use a git repository as the source file for the component")
 	componentCreateCmd.Flags().StringVarP(&co.componentGitRef, "ref", "r", "", "Use a specific ref e.g. commit, branch or tag of the git repository")
-	componentCreateCmd.Flags().StringVar(&co.componentContext, "context", "", "Use context to indicate the path where the component settings need to be saved and this directory should contain component source for local and binary components")
+	componentCreateCmd.Flags().StringVar(&co.componentContext, "context", "./", "Use context to indicate the path where the component settings need to be saved and this directory should contain component source for local and binary components")
 	componentCreateCmd.Flags().StringVar(&co.memory, "memory", "", "Amount of memory to be allocated to the component. ex. 100Mi")
 	componentCreateCmd.Flags().StringVar(&co.memoryMin, "min-memory", "", "Limit minimum amount of memory to be allocated to the component. ex. 100Mi")
 	componentCreateCmd.Flags().StringVar(&co.memoryMax, "max-memory", "", "Limit maximum amount of memory to be allocated to the component. ex. 100Mi")

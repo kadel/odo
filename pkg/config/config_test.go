@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/redhat-developer/odo/pkg/testingutil"
 	"github.com/redhat-developer/odo/pkg/util"
 )
 
@@ -215,14 +216,10 @@ func TestLowerCaseParameterForLocalParameters(t *testing.T) {
 }
 
 func TestLocalConfigInitDoesntCreateLocalOdoFolder(t *testing.T) {
-	// cleaning up old odo files if any
-	filename, err := getLocalConfigFile("")
-	if err != nil {
-		t.Error(err)
-	}
-	os.RemoveAll(filename)
+	contextDir, err := testingutil.TempMkdir("", t.Name())
+	defer os.RemoveAll(contextDir)
 
-	conf, err := NewLocalConfigInfo("")
+	conf, err := NewLocalConfigInfo(contextDir)
 	if err != nil {
 		t.Errorf("error while creating local config %v", err)
 	}
@@ -232,7 +229,10 @@ func TestLocalConfigInitDoesntCreateLocalOdoFolder(t *testing.T) {
 }
 
 func TestMetaTypePopulatedInLocalConfig(t *testing.T) {
-	ci, err := NewLocalConfigInfo("")
+	contextDir, err := testingutil.TempMkdir("", t.Name())
+	defer os.RemoveAll(contextDir)
+
+	ci, err := NewLocalConfigInfo(contextDir)
 
 	if err != nil {
 		t.Error(err)

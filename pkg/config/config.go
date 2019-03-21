@@ -19,6 +19,7 @@ const (
 	configFileName        = "config.yaml"
 	localConfigKind       = "LocalConfig"
 	localConfigAPIVersion = "odo.openshift.io/v1alpha1"
+	configDirectory       = ".odo"
 )
 
 // ComponentSettings holds all component related information
@@ -27,8 +28,10 @@ type ComponentSettings struct {
 	// The builder image to use
 	Type *string `yaml:"Type,omitempty"`
 
-	// SourceLocation is path to binary in current/context dir, it can be the
-	// git url in case of source type being git
+	// SourceLocation is path to binary in current/context dir for binary components (if SourceType==SrcType.BINARY).
+	// For local components (if SourceType==SrcType.LOCAL) this is path to the root of the source code.
+	// Path to binary and local source code is alway relative to the context (directory where .odo directory is).
+	// For git components (if SourceType==SrcType.GIT) it is url to the git repository.
 	SourceLocation *string `yaml:"SourceLocation,omitempty"`
 
 	// Ref is component source git ref but can be levaraged for more in future
@@ -79,20 +82,16 @@ type LocalConfigInfo struct {
 	LocalConfig `yaml:",omitempty"`
 }
 
-func getLocalConfigFile(cfgDir string) (string, error) {
+func getLocalConfigFile(contextDir string) (string, error) {
 	if env, ok := os.LookupEnv(localConfigEnvName); ok {
 		return env, nil
 	}
 
-	if cfgDir == "" {
-		var err error
-		cfgDir, err = os.Getwd()
-		if err != nil {
-			return "", err
-		}
+	if contextDir == "" {
+		return "", fmt.Errorf("contextDir can't be empty")
 	}
 
-	return filepath.Join(cfgDir, ".odo", configFileName), nil
+	return filepath.Join(contextDir, configDirectory, configFileName), nil
 }
 
 // New returns the localConfigInfo
@@ -100,10 +99,10 @@ func New() (*LocalConfigInfo, error) {
 	return NewLocalConfigInfo("")
 }
 
-// NewLocalConfigInfo gets the LocalConfigInfo from local config file and creates the local config file in case it's
-// not present then it
-func NewLocalConfigInfo(cfgDir string) (*LocalConfigInfo, error) {
-	configFile, err := getLocalConfigFile(cfgDir)
+// NewLocalConfigInfo gets the LocalConfigInfo from context directory and creates the local config file in case it's
+// not present
+func NewLocalConfigInfo(contextDir string) (*LocalConfigInfo, error) {
+	configFile, err := getLocalConfigFile(contextDir)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get odo config file")
 	}
