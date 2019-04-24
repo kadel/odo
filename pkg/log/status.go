@@ -238,6 +238,16 @@ func IsDebug() bool {
 	return false
 }
 
+// Hintf will print hint, guiding user what are next possible steps
+func Hintf(format string, a ...interface{}) {
+	fmt.Fprintf(GetStdout(), "HINT: %s\n", fmt.Sprintf(format, a...))
+}
+
+// Hint will print hint, guiding user what are next possible steps
+func Hint(msg string) {
+	fmt.Fprintf(GetStdout(), "HINT: %s\n", msg)
+}
+
 // GetStdout gets the appropriate stdout from the OS. If it's Linux, it will use
 // the go-colorable library in order to fix any and all color ASCII issues.
 // TODO: Test needs to be added once we get Windows testing available on TravisCI / CI platform.

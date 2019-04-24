@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -27,7 +29,7 @@ var _ = Describe("odoLoginE2e", func() {
 				session1 = runCmdShouldPass(fmt.Sprintf("odo login -u %s -p %s", loginTestUserForNoProject, loginTestUserPassword))
 				Expect(session1).To(ContainSubstring("Login successful"))
 				Expect(session1).To(ContainSubstring("You don't have any projects. You can try to create a new project, by running"))
-				Expect(session1).To(ContainSubstring("odo project create <project-name>"))
+				Expect(session1).To(ContainSubstring("odo project create <projectname>"))
 				session1 = runCmdShouldPass("oc whoami")
 				Expect(session1).To(ContainSubstring(loginTestUserForNoProject))
 				// One initialization needs one login, hence it happens here
@@ -38,7 +40,7 @@ var _ = Describe("odoLoginE2e", func() {
 				session1 = runCmdShouldPass(fmt.Sprintf("odo login -t %s", testUserToken1))
 				Expect(session1).To(ContainSubstring("Logged into"))
 				Expect(session1).To(ContainSubstring("You don't have any projects. You can try to create a new project, by running"))
-				Expect(session1).To(ContainSubstring("odo project create <project-name>"))
+				Expect(session1).To(ContainSubstring("odo project create <projectname>"))
 				session1 = runCmdShouldPass("oc whoami")
 				Expect(session1).To(ContainSubstring(loginTestUserForNoProject))
 			})
@@ -47,6 +49,18 @@ var _ = Describe("odoLoginE2e", func() {
 				sessionErr := runCmdShouldFail("odo login -t verybadtoken")
 				Expect(sessionErr).To(ContainSubstring("The token provided is invalid or expired"))
 				runCmdShouldPass(fmt.Sprintf("oc login --token %s", currentUserToken1))
+			})
+
+			It("Show unknown CA message", func() {
+				// create empty file and use it as certificate-authority to simulate unknown CA authority
+				emptyCa, err := ioutil.TempFile("", "")
+				Expect(err).NotTo(HaveOccurred())
+				defer os.Remove(emptyCa.Name())
+
+				sessionErr := runCmdShouldFail(
+					fmt.Sprintf("odo login https://api.tkral.devcluster.openshift.com:6443 --certificate-authority %s -u user -p pass", emptyCa.Name()),
+				)
+				Expect(sessionErr).To(ContainSubstring("The server uses a certificate signed by unknown authority."))
 			})
 		})
 		// The tests commented out below are failing for some reason on Openshift CI...
