@@ -673,12 +673,23 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 		return errors.Wrapf(err, "error while waiting for pod  %s", podSelector)
 	}
 
+	DevModeSourceDir := getEnvFromPodEnvs(occlient.EnvS2IDevModeSourceDir, pod.Spec.Containers[0].Env)
 	// Get S2I Source/Binary Path from Pod Env variables created at the time of component create
 	s2iSrcPath := getEnvFromPodEnvs(occlient.EnvS2IDestinationPath, pod.Spec.Containers[0].Env)
 	if s2iSrcPath == "" {
 		s2iSrcPath = occlient.DefaultS2ISrcOrBinPath
 	}
-	targetPath := fmt.Sprintf("%s/src", s2iSrcPath)
+
+	var targetPath string
+	// If image supports dev mode
+	if DevModeSourceDir != "" {
+		targetPath = DevModeSourceDir
+		glog.V(4).Infof("Image has support for dev mode. Source code will be pushed to %s", targetPath)
+	} else {
+		targetPath = fmt.Sprintf("%s/src", s2iSrcPath)
+		glog.V(4).Infof("Image doesn't support dev mode. Source code will be pushed to %s", targetPath)
+
+	}
 
 	// If there are files identified as deleted, propagate them to the component pod
 	if len(delFiles) > 0 {
@@ -750,7 +761,7 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 
 	err = client.ExecCMDInContainer(pod.Name,
 		// We will use the assemble-and-restart script located within the supervisord container we've created
-		[]string{"/var/lib/supervisord/bin/refresh"},
+		[]string{"/var/lib/supervisord/bin/exec-refresh"},
 		pipeWriter, pipeWriter, nil, false)
 
 	if err != nil {

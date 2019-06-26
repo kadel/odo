@@ -125,6 +125,9 @@ const (
 	// This is required to persist deployed artifacts across supervisord restarts
 	EnvS2IDeploymentBackupDir = "ODO_DEPLOYMENT_BACKUP_DIR"
 
+	// EnvS2IDevModeSourceDir is the env variable which values corresponds to the com.redhat.dev-mode.source-dir image label value
+	EnvS2IDevModeSourceDir = "ODO_S2I_DEV_MODE_SOURCE_DIR"
+
 	// EnvAppRoot is env var s2i exposes in component container to indicate the path where component source resides
 	EnvAppRoot = "APP_ROOT"
 
@@ -137,6 +140,9 @@ const (
 
 	// S2IDestinationLabel is the label that provides, path where S2I expects component source or binary
 	S2IDestinationLabel = "io.openshift.s2i.destination"
+
+	// S2IDevModeSourceDir is the label that indicates where dev mode scripts expect the source code to be
+	S2IDevModeSourceDir = "com.redhat.dev-mode.source-dir"
 
 	// EnvS2IBuilderImageName is the label that provides the name of builder image in component
 	EnvS2IBuilderImageName = "ODO_S2I_BUILDER_IMG"
@@ -158,9 +164,9 @@ const (
 	EnvS2IWorkingDir = "ODO_S2I_WORKING_DIR"
 )
 
-// S2IPaths is a struct that will hold path to S2I scripts and the protocol indicating access to them, component source/binary paths, artifacts deployments directory
+// ImagePaths is a struct that will hold paths to S2I scripts and the protocol indicating access to them, component source/binary paths, artifacts deployments directory
 // These are passed as env vars to component pod
-type S2IPaths struct {
+type ImagePaths struct {
 	ScriptsPathProtocol string
 	ScriptsPath         string
 	SrcOrBinPath        string
@@ -168,6 +174,8 @@ type S2IPaths struct {
 	WorkingDir          string
 	SrcBackupPath       string
 	BuilderImgName      string
+	// DevModeSourceDir is path where dev mode related scripts expect source code
+	DevModeSourceDir string
 }
 
 // UpdateComponentParams serves the purpose of holding the arguments to a component update request
@@ -971,7 +979,7 @@ func getS2ILabelValue(labels map[string]string, expectedLabelsSet []string) stri
 }
 
 // GetS2IMetaInfoFromBuilderImg returns script path protocol, S2I scripts path, S2I source or binary expected path, S2I deployment dir and errors(if any) from the passed builder image
-func GetS2IMetaInfoFromBuilderImg(builderImage *imagev1.ImageStreamImage) (S2IPaths, error) {
+func GetS2IMetaInfoFromBuilderImg(builderImage *imagev1.ImageStreamImage) (ImagePaths, error) {
 
 	// Define structs for internal un-marshalling of imagestreamimage to extract label from it
 	type ContainerConfig struct {
@@ -990,13 +998,13 @@ func GetS2IMetaInfoFromBuilderImg(builderImage *imagev1.ImageStreamImage) (S2IPa
 	// Unmarshal the byte array into the struct for ease of access of required fields
 	err := json.Unmarshal(dimdrByteArr, &dimdr)
 	if err != nil {
-		return S2IPaths{}, errors.Wrap(err, "unable to bootstrap supervisord")
+		return ImagePaths{}, errors.Wrap(err, "unable to bootstrap supervisord")
 	}
 
 	// If by any chance, labels attribute is nil(although ideally not the case for builder images), return
 	if dimdr.ContainerConfig.Labels == nil {
 		glog.V(4).Infof("No Labels found in %+v in builder image %+v", dimdr, builderImage)
-		return S2IPaths{}, nil
+		return ImagePaths{}, nil
 	}
 
 	// Extract the label containing S2I scripts URL
@@ -1030,9 +1038,9 @@ func GetS2IMetaInfoFromBuilderImg(builderImage *imagev1.ImageStreamImage) (S2IPa
 		s2iScriptsProtocol = "http(s)://"
 		s2iScriptsPath = s2iScriptsURL
 	default:
-		return S2IPaths{}, fmt.Errorf("Unknown scripts url %s", s2iScriptsURL)
+		return ImagePaths{}, fmt.Errorf("Unknown scripts url %s", s2iScriptsURL)
 	}
-	return S2IPaths{
+	return ImagePaths{
 		ScriptsPathProtocol: s2iScriptsProtocol,
 		ScriptsPath:         s2iScriptsPath,
 		SrcOrBinPath:        s2iSrcOrBinPath,
@@ -1040,6 +1048,7 @@ func GetS2IMetaInfoFromBuilderImg(builderImage *imagev1.ImageStreamImage) (S2IPa
 		WorkingDir:          dimdr.ContainerConfig.WorkingDir,
 		SrcBackupPath:       DefaultS2ISrcBackupDir,
 		BuilderImgName:      s2iBuilderImgName,
+		DevModeSourceDir:    dimdr.ContainerConfig.Labels[S2IDevModeSourceDir],
 	}, nil
 }
 
@@ -1186,6 +1195,10 @@ func (c *Client) BootstrapSupervisoredS2I(params CreateArgs, commonObjectMeta me
 		corev1.EnvVar{
 			Name:  EnvS2IDeploymentBackupDir,
 			Value: DefaultS2IDeploymentBackupDir,
+		},
+		corev1.EnvVar{
+			Name:  EnvS2IDevModeSourceDir,
+			Value: s2iPaths.DevModeSourceDir,
 		},
 	)
 
