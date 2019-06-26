@@ -309,7 +309,7 @@ func getS2IPaths(podEnvs []corev1.EnvVar) []string {
 	// List of s2i Paths exported for use in container pod for working with source/binary
 	s2iPathEnvs := []string{
 		occlient.EnvS2IDeploymentDir,
-		occlient.EnvS2ISrcOrBinPath,
+		occlient.EnvS2IDestinationPath,
 		occlient.EnvS2IWorkingDir,
 		occlient.EnvS2ISrcBackupDir,
 	}
@@ -674,7 +674,7 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 	}
 
 	// Get S2I Source/Binary Path from Pod Env variables created at the time of component create
-	s2iSrcPath := getEnvFromPodEnvs(occlient.EnvS2ISrcOrBinPath, pod.Spec.Containers[0].Env)
+	s2iSrcPath := getEnvFromPodEnvs(occlient.EnvS2IDestinationPath, pod.Spec.Containers[0].Env)
 	if s2iSrcPath == "" {
 		s2iSrcPath = occlient.DefaultS2ISrcOrBinPath
 	}
@@ -750,7 +750,7 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 
 	err = client.ExecCMDInContainer(pod.Name,
 		// We will use the assemble-and-restart script located within the supervisord container we've created
-		[]string{"/var/lib/supervisord/bin/assemble-and-restart"},
+		[]string{"/var/lib/supervisord/bin/refresh"},
 		pipeWriter, pipeWriter, nil, false)
 
 	if err != nil {

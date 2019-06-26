@@ -36,7 +36,7 @@ func TestGetS2IPaths(t *testing.T) {
 					Value: "abc",
 				},
 				{
-					Name:  occlient.EnvS2ISrcOrBinPath,
+					Name:  occlient.EnvS2IDestinationPath,
 					Value: "def",
 				},
 				{
@@ -64,7 +64,7 @@ func TestGetS2IPaths(t *testing.T) {
 					Value: "abc",
 				},
 				{
-					Name:  occlient.EnvS2ISrcOrBinPath,
+					Name:  occlient.EnvS2IDestinationPath,
 					Value: "def",
 				},
 				{

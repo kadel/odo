@@ -114,11 +114,11 @@ const (
 	// EnvS2IScriptsProtocol is an env var exposed to https://github.com/openshift/odo-supervisord-image/blob/master/assemble-and-restart to indicate the way to access location of s2i scripts indicated by ${${EnvS2IScriptsURL}} above
 	EnvS2IScriptsProtocol = "ODO_S2I_SCRIPTS_PROTOCOL"
 
-	// EnvS2ISrcOrBinPath is an env var exposed by s2i to indicate where the builder image expects the component source or binary to reside
-	EnvS2ISrcOrBinPath = "ODO_S2I_SRC_BIN_PATH"
+	// EnvS2IDestinationPath is an env var exposed by s2i to indicate where the builder image expects the component source or binary to reside
+	EnvS2IDestinationPath = "ODO_S2I_DESTINATION_PATH"
 
 	// EnvS2ISrcBackupDir is the env var that points to the directory that holds a backup of component source
-	// This is required bcoz, s2i assemble script moves(hence deletes contents) the contents of $ODO_S2I_SRC_BIN_PATH to $APP_ROOT during which $APP_DIR alo needs to be empty so that mv doesn't complain pushing to an already exisiting dir with same name
+	// This is required bcoz, s2i assemble script moves(hence deletes contents) the contents of $ODO_S2I_DESTINATION_PATH to $APP_ROOT during which $APP_DIR alo needs to be empty so that mv doesn't complain pushing to an already exisiting dir with same name
 	EnvS2ISrcBackupDir = "ODO_SRC_BACKUP_DIR"
 
 	// EnvS2IDeploymentBackupDir is the env var that points to the directory that holds a backup of component deployment artifacts
@@ -135,8 +135,8 @@ const (
 	// S2IBuilderImageName is the S2I builder image name
 	S2IBuilderImageName = "name"
 
-	// S2ISrcOrBinLabel is the label that provides, path where S2I expects component source or binary
-	S2ISrcOrBinLabel = "io.openshift.s2i.destination"
+	// S2IDestinationLabel is the label that provides, path where S2I expects component source or binary
+	S2IDestinationLabel = "io.openshift.s2i.destination"
 
 	// EnvS2IBuilderImageName is the label that provides the name of builder image in component
 	EnvS2IBuilderImageName = "ODO_S2I_BUILDER_IMG"
@@ -144,7 +144,7 @@ const (
 	// EnvS2IDeploymentDir is an env var exposed to https://github.com/openshift/odo-supervisord-image/blob/master/assemble-and-restart to indicate s2i deployment directory
 	EnvS2IDeploymentDir = "ODO_S2I_DEPLOYMENT_DIR"
 
-	// DefaultS2ISrcOrBinPath is the default path where S2I expects source/binary artifacts in absence of $S2ISrcOrBinLabel in builder image
+	// DefaultS2ISrcOrBinPath is the default path where S2I expects source/binary artifacts in absence of $S2IDestinationLabel in builder image
 	// Ref: https://github.com/openshift/source-to-image/blob/master/docs/builder_image.md#required-image-contents
 	DefaultS2ISrcOrBinPath = "/tmp"
 
@@ -1001,7 +1001,7 @@ func GetS2IMetaInfoFromBuilderImg(builderImage *imagev1.ImageStreamImage) (S2IPa
 
 	// Extract the label containing S2I scripts URL
 	s2iScriptsURL := dimdr.ContainerConfig.Labels[S2IScriptsURLLabel]
-	s2iSrcOrBinPath := dimdr.ContainerConfig.Labels[S2ISrcOrBinLabel]
+	s2iSrcOrBinPath := dimdr.ContainerConfig.Labels[S2IDestinationLabel]
 	s2iBuilderImgName := dimdr.ContainerConfig.Labels[S2IBuilderImageName]
 
 	if s2iSrcOrBinPath == "" {
@@ -1168,7 +1168,7 @@ func (c *Client) BootstrapSupervisoredS2I(params CreateArgs, commonObjectMeta me
 			Value: s2iPaths.ScriptsPathProtocol,
 		},
 		corev1.EnvVar{
-			Name:  EnvS2ISrcOrBinPath,
+			Name:  EnvS2IDestinationPath,
 			Value: s2iPaths.SrcOrBinPath,
 		},
 		corev1.EnvVar{
@@ -1589,7 +1589,7 @@ func (c *Client) UpdateDCToSupervisor(ucp UpdateComponentParams, isToLocal bool,
 			Value: s2iPaths.ScriptsPathProtocol,
 		},
 		corev1.EnvVar{
-			Name:  EnvS2ISrcOrBinPath,
+			Name:  EnvS2IDestinationPath,
 			Value: s2iPaths.SrcOrBinPath,
 		},
 		corev1.EnvVar{
