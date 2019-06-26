@@ -1621,6 +1621,10 @@ func (c *Client) UpdateDCToSupervisor(ucp UpdateComponentParams, isToLocal bool,
 			Name:  EnvS2IDeploymentBackupDir,
 			Value: DefaultS2IDeploymentBackupDir,
 		},
+		corev1.EnvVar{
+			Name:  EnvS2IDevModeSourceDir,
+			Value: s2iPaths.DevModeSourceDir,
+		},
 	)
 
 	if isToLocal {

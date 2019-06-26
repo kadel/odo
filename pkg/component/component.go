@@ -761,7 +761,7 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 
 	err = client.ExecCMDInContainer(pod.Name,
 		// We will use the assemble-and-restart script located within the supervisord container we've created
-		[]string{"/var/lib/supervisord/bin/exec-refresh"},
+		[]string{"/var/lib/supervisord/bin/execute-refresh"},
 		pipeWriter, pipeWriter, nil, false)
 
 	if err != nil {
