@@ -732,9 +732,9 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 	s.End(true)
 
 	if show {
-		s = log.SpinnerNoSpin("Building component")
+		s = log.SpinnerNoSpin("Reloading component")
 	} else {
-		s = log.Spinner("Building component")
+		s = log.Spinner("Reloading component")
 	}
 
 	// use pipes to write output from ExecCMDInContainer in yellow  to 'out' io.Writer
