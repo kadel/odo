@@ -128,6 +128,9 @@ const (
 	// EnvS2IDevModeSourceDir is the env variable which values corresponds to the com.redhat.dev-mode.source-dir image label value
 	EnvS2IDevModeSourceDir = "ODO_S2I_DEV_MODE_SOURCE_DIR"
 
+	// EnvS2IDevMode indicates whether the container is started in dev mode or not
+	EnvS2IDevMode = "DEV_MODE"
+
 	// EnvAppRoot is env var s2i exposes in component container to indicate the path where component source resides
 	EnvAppRoot = "APP_ROOT"
 
@@ -1202,6 +1205,16 @@ func (c *Client) BootstrapSupervisoredS2I(params CreateArgs, commonObjectMeta me
 		},
 	)
 
+	if s2iPaths.DevModeSourceDir != "" {
+		inputEnvs = uniqueAppendOrOverwriteEnvVars(
+			inputEnvs,
+			corev1.EnvVar{
+				Name:  EnvS2IDevMode,
+				Value: "true",
+			},
+		)
+	}
+
 	if params.SourceType == config.LOCAL {
 		inputEnvs = uniqueAppendOrOverwriteEnvVars(
 			inputEnvs,
@@ -1626,6 +1639,16 @@ func (c *Client) UpdateDCToSupervisor(ucp UpdateComponentParams, isToLocal bool,
 			Value: s2iPaths.DevModeSourceDir,
 		},
 	)
+
+	if s2iPaths.DevModeSourceDir != "" {
+		inputEnvs = uniqueAppendOrOverwriteEnvVars(
+			inputEnvs,
+			corev1.EnvVar{
+				Name:  EnvS2IDevMode,
+				Value: "true",
+			},
+		)
+	}
 
 	if isToLocal {
 		inputEnvs = uniqueAppendOrOverwriteEnvVars(
