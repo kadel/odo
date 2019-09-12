@@ -38,6 +38,8 @@ var _ = Describe("odo push command tests", func() {
 	})
 
 	Context("when push command is executed", func() {
+
+		
 		It("should not build when no changes are detected in the directory and build when a file change is detected", func() {
 			helper.CmdShouldPass("git", "clone", "https://github.com/openshift/nodejs-ex", context+"/nodejs-ex")
 			helper.CmdShouldPass("odo", "component", "create", "nodejs", cmpName, "--project", project, "--context", context+"/nodejs-ex", "--app", appName)
@@ -313,4 +315,7 @@ var _ = Describe("odo push command tests", func() {
 			Expect(output).To(ContainSubstring("No file changes detected, skipping build"))
 		})
 	})
+
+
+	
 })

@@ -19,6 +19,8 @@ const (
 	appRootSubPath = "app-root"
 	// deploymentDirSubPath defines the sup-path in the odo's PV where the deployment dir will recide
 	deploymentDirSubPath = "deployment"
+
+	toolsDirSubPath = "odo-tools"
 )
 
 // CommonImageMeta has all the most common image data that is passed around within Odo
@@ -83,35 +85,10 @@ func generateSupervisordDeploymentConfig(commonObjectMeta metav1.ObjectMeta, com
 							Ports: commonImageMeta.Ports,
 							// Run the actual supervisord binary that has been mounted into the container
 							Command: []string{
-								"/opt/odo/bin/dumb-init",
-								"--",
-							},
-							// Using the appropriate configuration file that contains the "run" script for the component.
-							// either from: /usr/libexec/s2i/assemble or /opt/app-root/src/.s2i/bin/assemble
-							Args: []string{
-								"/opt/odo/bin/supervisord",
-								"-c",
-								"/opt/odo/conf/supervisor.conf",
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      supervisordVolumeName,
-									MountPath: "/opt/odo/",
-								},
+								"/opt/odo/bin/entrypoint.sh",
 							},
 							Env:     envVar,
 							EnvFrom: envFrom,
-						},
-					},
-
-					// Create a volume that will be shared betwen InitContainer and the applicationContainer
-					// in order to pass over the SupervisorD binary
-					Volumes: []corev1.Volume{
-						{
-							Name: supervisordVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
 						},
 					},
 				},
@@ -410,19 +387,20 @@ func addBootstrapSupervisordInitContainer(dc *appsv1.DeploymentConfig, dcName st
 
 	dc.Spec.Template.Spec.InitContainers = append(dc.Spec.Template.Spec.InitContainers,
 		corev1.Container{
-			Name:  "copy-supervisord",
-			Image: getBootstrapperImage(),
+			Name:            "copy-supervisord",
+			Image:           getBootstrapperImage(),
+			ImagePullPolicy: corev1.PullAlways,
 			VolumeMounts: []corev1.VolumeMount{
 				{
-					Name:      supervisordVolumeName,
+					Name:      getAppRootVolumeName(dcName),
 					MountPath: "/opt/odo/",
+					SubPath:   toolsDirSubPath,
 				},
 			},
 			Command: []string{
-				"/usr/bin/cp",
+				"/opt/odo-init/bin/copy-to-volume.sh",
 			},
 			Args: []string{
-				"-r",
 				"/opt/odo-init/.",
 				"/opt/odo/",
 			},
@@ -455,6 +433,10 @@ func addBootstrapVolumeMount(dc *appsv1.DeploymentConfig, dcName string) {
 // dc is the deployment config to be updated
 func addDeploymentDirVolumeMount(dc *appsv1.DeploymentConfig, mountPath string) {
 	addVolumeMount(dc, getAppRootVolumeName(dc.Name), mountPath, deploymentDirSubPath)
+}
+
+func addToolsVolumeMount(dc *appsv1.DeploymentConfig, mountPath string) {
+	addVolumeMount(dc, getAppRootVolumeName(dc.Name), mountPath, toolsDirSubPath)
 }
 
 // addVolumeMount adds a volume mount to the deployment config

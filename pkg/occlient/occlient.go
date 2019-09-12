@@ -100,9 +100,6 @@ const (
 	// ENV variable to overwrite image used to bootstrap SupervisorD in S2I builder Image
 	bootstrapperImageEnvName = "ODO_BOOTSTRAPPER_IMAGE"
 
-	// Create a custom name and (hope) that users don't use the *exact* same name in their deployment
-	supervisordVolumeName = "odo-supervisord-shared-data"
-
 	// waitForPodTimeOut controls how long we should wait for a pod before giving up
 	waitForPodTimeOut = 240 * time.Second
 
@@ -149,6 +146,8 @@ const (
 	EnvS2IWorkingDir = "ODO_S2I_WORKING_DIR"
 
 	DefaultAppRootDir = "/opt/app-root"
+
+	toolsMountPoint = "/opt/odo"
 )
 
 // S2IPaths is a struct that will hold path to S2I scripts and the protocol indicating access to them, component source/binary paths, artifacts deployments directory
@@ -1414,14 +1413,10 @@ func copyVolumesAndVolumeMounts(dc appsv1.DeploymentConfig, currentDC *appsv1.De
 
 			// Loop through all the volumes
 			for _, volume := range matchingContainer.VolumeMounts {
-				// If it's the supervisord volume, ignore it.
-				if volume.Name == supervisordVolumeName {
-					continue
-				} else {
-					// check if we are appending the same volume mount again or not
-					if _, ok := dcVolumeMountsMap[volume.Name]; !ok {
-						dc.Spec.Template.Spec.Containers[index].VolumeMounts = append(dc.Spec.Template.Spec.Containers[index].VolumeMounts, volume)
-					}
+
+				// check if we are appending the same volume mount again or not
+				if _, ok := dcVolumeMountsMap[volume.Name]; !ok {
+					dc.Spec.Template.Spec.Containers[index].VolumeMounts = append(dc.Spec.Template.Spec.Containers[index].VolumeMounts, volume)
 				}
 			}
 
@@ -1438,14 +1433,12 @@ func copyVolumesAndVolumeMounts(dc appsv1.DeploymentConfig, currentDC *appsv1.De
 
 	// Now the same with Volumes, again, ignoring the supervisord volume.
 	for _, volume := range currentDC.Spec.Template.Spec.Volumes {
-		if volume.Name == supervisordVolumeName {
-			continue
-		} else {
-			// check if we are appending the same volume again or not
-			if _, ok := dcVolumeMap[volume.Name]; !ok {
-				dc.Spec.Template.Spec.Volumes = append(dc.Spec.Template.Spec.Volumes, volume)
-			}
+
+		// check if we are appending the same volume again or not
+		if _, ok := dcVolumeMap[volume.Name]; !ok {
+			dc.Spec.Template.Spec.Volumes = append(dc.Spec.Template.Spec.Volumes, volume)
 		}
+
 	}
 }
 
@@ -1572,6 +1565,7 @@ func (c *Client) UpdateDCToSupervisor(ucp UpdateComponentParams, isToLocal bool,
 		addBootstrapSupervisordInitContainer(&dc, ucp.CommonObjectMeta.Name)
 		addBootstrapVolume(&dc, ucp.CommonObjectMeta.Name)
 		addBootstrapVolumeMount(&dc, ucp.CommonObjectMeta.Name)
+		addToolsVolumeMount(&dc, toolsMountPoint)
 		// only use the deployment Directory volume mount if its being used and
 		// its not a sub directory of src_or_bin_path
 		if s2iPaths.DeploymentDir != "" && !isSubDir(DefaultAppRootDir, s2iPaths.DeploymentDir) {
@@ -2742,11 +2736,12 @@ func (c *Client) CopyFile(localPath string, targetPodName string, targetPath str
 
 	}()
 
+	var stderr bytes.Buffer
 	// cmdArr will run inside container
 	cmdArr := []string{"tar", "xf", "-", "-C", targetPath, "--strip", "1"}
-	err := c.ExecCMDInContainer(targetPodName, cmdArr, nil, nil, reader, false)
+	err := c.ExecCMDInContainer(targetPodName, cmdArr, nil, &stderr, reader, false)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "command returned stderr: '"+strings.Replace(stderr.String(), "\n", " ", -1)+"'")
 	}
 	return nil
 }
