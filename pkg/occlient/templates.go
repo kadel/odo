@@ -465,3 +465,42 @@ func addVolumeMount(dc *appsv1.DeploymentConfig, name, mountPath, subPath string
 		})
 	}
 }
+
+// GenerateFileCopierPod returns pod used for bootstraping source files
+func generateFileCopierPod(pvcName string, volumePath string) corev1.Pod {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "filecopier",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Image: "busybox",
+					Name:  "filecopier",
+					Command: []string{
+						"sleep",
+						"1h",
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      pvcName,
+							MountPath: volumePath,
+						},
+					},
+				},
+			},
+
+			Volumes: []corev1.Volume{
+				{
+					Name: pvcName,
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: pvcName,
+						},
+					},
+				},
+			},
+		},
+	}
+	return pod
+}

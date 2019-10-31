@@ -45,6 +45,7 @@ type CreateOptions struct {
 	cpu               string
 	interactive       bool
 	now               bool
+	devfile           string
 	*CommonPushOptions
 }
 
