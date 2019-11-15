@@ -90,6 +90,7 @@ func resolveFilePath(directory string) (string, error) {
 // The filemap stores the values as "relative filepath" => FileData but it the filesChanged and filesDeleted are absolute paths
 // to the files
 func RunIndexer(directory string, ignoreRules []string) (filesChanged []string, filesDeleted []string, err error) {
+
 	resolvedPath, err := resolveFilePath(directory)
 	if err != nil {
 		return filesChanged, filesDeleted, err

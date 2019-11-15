@@ -15,6 +15,7 @@ import (
 // CreatePVC creates a PVC resource in the cluster with the given name, size and
 // labels
 func (c *Client) CreatePVC(name string, size string, labels map[string]string) (*corev1.PersistentVolumeClaim, error) {
+	glog.V(4).Infof("Creating PVC %s", name)
 	quantity, err := resource.ParseQuantity(size)
 	if err != nil {
 		return nil, errors.Wrapf(err, "unable to parse size: %v", size)

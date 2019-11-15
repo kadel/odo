@@ -34,7 +34,7 @@ func EnvToEnvVar(envs []DockerimageEnv) []corev1.EnvVar {
 	return envVars
 }
 
-func ComponentToContainer(component *DevfileComponent) (*corev1.Container, error) {
+func (component *DevfileComponent) ConvertToContainer() (*corev1.Container, error) {
 	if component.Type != DevfileComponentsTypeDockerimage {
 		return nil, fmt.Errorf("component needs to have dockerimage type")
 	}
@@ -53,4 +53,29 @@ func ComponentToContainer(component *DevfileComponent) (*corev1.Container, error
 	// Endpoints
 
 	return &container, nil
+}
+
+// getCommandAction get information about command
+// first string is command, second one is workdir
+func (devf *Devfile) GetCommandAction(commandName string) (*DevfileCommandAction, error) {
+	for _, command := range devf.Commands {
+		if command.Name == commandName {
+			if len(command.Actions) != 1 {
+				return nil, fmt.Errorf("commands with only one action are supported for now")
+			}
+			return &command.Actions[0], nil
+		}
+	}
+	return nil, fmt.Errorf("unable to find %s command", commandName)
+}
+
+func (devf *Devfile) GetComponent(alias string) (*DevfileComponent, error) {
+	for _, component := range devf.Components {
+
+		if component.Alias != nil && *component.Alias == alias {
+			return &component, nil
+		}
+	}
+	return nil, fmt.Errorf("unable to find component with alias=%s", alias)
+
 }

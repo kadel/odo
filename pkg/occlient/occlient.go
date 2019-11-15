@@ -2658,7 +2658,18 @@ func (c *Client) CopyFile(localPath string, targetPodName string, targetPath str
 
 	}()
 
-	// cmdArr will run inside container
+	var stdoutMkdir bytes.Buffer
+	var stderrMkdir bytes.Buffer
+	mkdirCmd := []string{"mkdir", "-p", targetPath}
+	errMkdir := c.ExecCMDInContainer(targetPodName, mkdirCmd, &stdoutMkdir, &stderrMkdir, nil, false)
+	if errMkdir != nil {
+		glog.Errorf("Command '%s' in container failed.\n", strings.Join(mkdirCmd, " "))
+		glog.Errorf("stdout: %s\n", stdoutMkdir.String())
+		glog.Errorf("stderr: %s\n", stderrMkdir.String())
+		glog.Errorf("err: %s\n", errMkdir.Error())
+		return errMkdir
+	}
+
 	cmdArr := []string{"tar", "xf", "-", "-C", targetPath, "--strip", "1"}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -2910,7 +2921,7 @@ func (c *Client) GetServerVersion() (*ServerInfo, error) {
 
 // ExecCMDInContainer execute command in first container of a pod
 func (c *Client) ExecCMDInContainer(podName string, cmd []string, stdout io.Writer, stderr io.Writer, stdin io.Reader, tty bool) error {
-
+	glog.V(4).Infof("executing command %v, inside pod %s", cmd, podName)
 	req := c.kubeClient.CoreV1().RESTClient().
 		Post().
 		Namespace(c.Namespace).
