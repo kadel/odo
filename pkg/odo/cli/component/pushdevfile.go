@@ -176,6 +176,7 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 		}
 	}
 	// TODO(tkral): wait for pod to be deleted
+	// or use Deployment
 
 	devfRunComponent, err := devf.GetComponent(*runAction.Component)
 	if err != nil {
