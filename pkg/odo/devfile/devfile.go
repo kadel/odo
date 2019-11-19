@@ -3,6 +3,7 @@ package devfile
 import (
 	"fmt"
 	"io/ioutil"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
@@ -46,6 +47,17 @@ func (component *DevfileComponent) ConvertToContainer() (*corev1.Container, erro
 	container.Command = component.Command
 	container.Args = component.Args
 	container.Env = EnvToEnvVar(component.Env)
+	container.Ports = []corev1.ContainerPort{}
+
+	for _, entrypoint := range component.Endpoints {
+		container.Ports = append(container.Ports,
+			corev1.ContainerPort{
+				Name:          strings.ReplaceAll(*entrypoint.Name, "/", "-"),
+				ContainerPort: *entrypoint.Port,
+				// TODO(tkral): read from attributes
+				Protocol: corev1.ProtocolTCP,
+			})
+	}
 
 	// TODO:
 	// MemoryLimit

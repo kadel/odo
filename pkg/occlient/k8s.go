@@ -6,69 +6,17 @@ import (
 	"github.com/golang/glog"
 	"github.com/openshift/odo/pkg/log"
 	"github.com/pkg/errors"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
-
-// func (c *Client) CreateFileCopierPod(pvcName string, volumePath string) (*corev1.Pod, error) {
-// 	pod := generateFileCopierPod(pvcName, volumePath)
-// 	createdPod, err := c.kubeClient.CoreV1().Pods(c.Namespace).Create(&pod)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return createdPod, nil
-// }
 
 func (c *Client) CreatePod(pod *corev1.Pod) (*corev1.Pod, error) {
 	createdPod, err := c.kubeClient.CoreV1().Pods(c.Namespace).Create(pod)
 	if err != nil {
 		return nil, err
 	}
-
 	return createdPod, nil
 }
-
-// // GenerateFileCopierPod returns pod used for bootstraping source files
-// func generateFileCopierPod(pvcName string, volumePath string) corev1.Pod {
-// 	pod := corev1.Pod{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			Name: "filecopier",
-// 			Labels: map[string]string{
-// 				// TODO(tkral): use const
-// 				"pod.odo.openshfit.io": "fileCopier",
-// 			},
-// 		},
-// 		Spec: corev1.PodSpec{
-// 			Containers: []corev1.Container{
-// 				{
-// 					Image: "busybox",
-// 					Name:  "filecopier",
-// 					Command: []string{
-// 						"sleep",
-// 						"1h",
-// 					},
-// 					VolumeMounts: []corev1.VolumeMount{
-// 						{
-// 							Name:      pvcName,
-// 							MountPath: volumePath,
-// 						},
-// 					},
-// 				},
-// 			},
-
-// 			Volumes: []corev1.Volume{
-// 				{
-// 					Name: pvcName,
-// 					VolumeSource: corev1.VolumeSource{
-// 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-// 							ClaimName: pvcName,
-// 						},
-// 					},
-// 				},
-// 			},
-// 		},
-// 	}
-// 	return pod
-// }
 
 func (c *Client) SyncFiles(podSelector string, path string, targetPath string, files []string, delFiles []string, forcePush bool, globExps []string) error {
 
@@ -125,4 +73,12 @@ func (c *Client) SyncFiles(podSelector string, path string, targetPath string, f
 
 func (c *Client) DeletePod(name string) error {
 	return c.kubeClient.CoreV1().Pods(c.Namespace).Delete(name, nil)
+}
+
+func (c *Client) CreateDeployment(deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
+	createdDeployment, err := c.kubeClient.AppsV1().Deployments(c.Namespace).Create(deployment)
+	if err != nil {
+		return nil, err
+	}
+	return createdDeployment, nil
 }

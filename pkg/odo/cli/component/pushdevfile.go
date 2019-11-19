@@ -99,6 +99,9 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	// it should also check that it is in running state
 	buildPod, err := client.GetOnePodFromSelector("podkind.odo.openshfit.io=build")
 	if err != nil {
+		glog.V(4).Infof("Forcing force push, because new  PVC and Build Pod is being created")
+		pdo.forcePush = true
+
 		_, err = client.CreatePVC(projectFilesPVC, "1Gi", map[string]string{})
 		if err != nil {
 			return err
@@ -167,6 +170,7 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	}
 	s.End(true)
 
+	// TODO: check fro deployment
 	runPod, err := client.GetOnePodFromSelector("podkind.odo.openshfit.io=run")
 	if err == nil {
 		// if pod exist delete it
@@ -186,8 +190,12 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	if err != nil {
 		return err
 	}
-	pod := devfile.GenerateRunPod(projectFilesPVC, *runContainer, *runAction.Command, *runAction.Workdir)
-	_, err = client.CreatePod(pod)
+	deployment := devfile.GenerateRunDeployment(projectFilesPVC, *runContainer, *runAction.Command, *runAction.Workdir)
+	_, err = client.CreateDeployment(deployment)
+	if err != nil {
+		return err
+	}
+	_, err = client.CreateService(deployment.ObjectMeta, deployment.Spec.Template.Spec.Containers[0].Ports)
 	if err != nil {
 		return err
 	}
