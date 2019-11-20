@@ -61,9 +61,12 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	}
 
 	projectFilesPVC := "project-files"
-	projectFilesBase := "/projects"
-	projectFilesPath := fmt.Sprintf("%s/%s", projectFilesBase, devf.Projects[0].Name)
+	cheProjectsRoot := "/projects"
+	localPath := "./"
+	projectFilesPath := fmt.Sprintf("%s/%s", cheProjectsRoot, devf.Projects[0].Name)
+	// name of command that that will be executed to build the app
 	buildCommand := "maven build"
+	// name of the command that will be used to run the app
 	runCommand := "run webapp"
 
 	buildAction, err := devf.GetCommandAction(buildCommand)
@@ -75,9 +78,8 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 		return err
 	}
 
-	localPath := "./"
-
 	// TODO(tkral): remove this
+	// Make sure that .odo directory exists, as  it is needed by fileindexer
 	odoDir := filepath.Join(localPath, ".odo")
 	if _, err := os.Stat(odoDir); os.IsNotExist(err) {
 		glog.V(4).Infof("Creating directory %s", odoDir)
@@ -115,7 +117,7 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 		if err != nil {
 			return err
 		}
-		pod := devfile.GenerateBuildPod(projectFilesPVC, *buildContainer)
+		pod := devfile.GenerateBuildPod(projectFilesPVC, *buildContainer, cheProjectsRoot)
 		_, err = client.CreatePod(pod)
 		if err != nil {
 			return err
@@ -179,8 +181,6 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 			return errDelete
 		}
 	}
-	// TODO(tkral): wait for pod to be deleted
-	// or use Deployment
 
 	devfRunComponent, err := devf.GetComponent(*runAction.Component)
 	if err != nil {
@@ -190,7 +190,7 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	if err != nil {
 		return err
 	}
-	deployment := devfile.GenerateRunDeployment(projectFilesPVC, *runContainer, *runAction.Command, *runAction.Workdir)
+	deployment := devfile.GenerateRunDeployment(projectFilesPVC, *runContainer, *runAction.Command, *runAction.Workdir, cheProjectsRoot)
 	_, err = client.CreateDeployment(deployment)
 	if err != nil {
 		return err

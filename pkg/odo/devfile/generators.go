@@ -8,23 +8,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func GenerateBuildPod(pvcName string, container corev1.Container) *corev1.Pod {
+func GenerateBuildPod(pvcName string, container corev1.Container, cheProjectsRoot string) *corev1.Pod {
+	// TODO(tkral): command should be something properly handles SIGTERM signal
 	container.Command = []string{
 		"sleep",
 		"1h",
 	}
 	container.VolumeMounts = append(container.VolumeMounts,
 		corev1.VolumeMount{
-			Name: pvcName,
-			// TODO(tkral): use const
-			MountPath: "/projects",
+			Name:      pvcName,
+			MountPath: cheProjectsRoot,
 		})
 
 	container.Name = "build"
 	container.Env = append(container.Env, corev1.EnvVar{
-		Name: "CHE_PROJECTS_ROOT",
-		// TODO(tkral): use const
-		Value: "/projects",
+		Name:  "CHE_PROJECTS_ROOT",
+		Value: cheProjectsRoot,
 	})
 
 	pod := corev1.Pod{
@@ -55,23 +54,21 @@ func GenerateBuildPod(pvcName string, container corev1.Container) *corev1.Pod {
 	return &pod
 }
 
-func GenerateRunPod(pvcName string, container corev1.Container, command string, workingDir string) *corev1.Pod {
+func GenerateRunPod(pvcName string, container corev1.Container, command string, workingDir string, cheProjectsRoot string) *corev1.Pod {
 	container.Command = []string{
 		"sh", "-c",
 		fmt.Sprintf("cd %s && %s", workingDir, command),
 	}
 	container.VolumeMounts = append(container.VolumeMounts,
 		corev1.VolumeMount{
-			Name: pvcName,
-			// TODO(tkral): use const
-			MountPath: "/projects",
+			Name:      pvcName,
+			MountPath: cheProjectsRoot,
 		})
 
 	container.Name = "build"
 	container.Env = append(container.Env, corev1.EnvVar{
-		Name: "CHE_PROJECTS_ROOT",
-		// TODO(tkral): use const
-		Value: "/projects",
+		Name:  "CHE_PROJECTS_ROOT",
+		Value: cheProjectsRoot,
 	})
 
 	pod := corev1.Pod{
@@ -102,14 +99,13 @@ func GenerateRunPod(pvcName string, container corev1.Container, command string, 
 	return &pod
 }
 
-func GenerateRunDeployment(pvcName string, container corev1.Container, command string, workingDir string) *appsv1.Deployment {
+func GenerateRunDeployment(pvcName string, container corev1.Container, command string, workingDir string, cheProjectsRoot string) *appsv1.Deployment {
 
 	// overwrite and add few stuff to the container
 	container.Name = "build"
 	container.Env = append(container.Env, corev1.EnvVar{
-		Name: "CHE_PROJECTS_ROOT",
-		// TODO(tkral): use const
-		Value: "/projects",
+		Name:  "CHE_PROJECTS_ROOT",
+		Value: cheProjectsRoot,
 	})
 	container.Command = []string{
 		"sh", "-c",
@@ -117,9 +113,8 @@ func GenerateRunDeployment(pvcName string, container corev1.Container, command s
 	}
 	container.VolumeMounts = append(container.VolumeMounts,
 		corev1.VolumeMount{
-			Name: pvcName,
-			// TODO(tkral): use const
-			MountPath: "/projects",
+			Name:      pvcName,
+			MountPath: cheProjectsRoot,
 		})
 
 	podSpec := corev1.PodSpec{

@@ -41,8 +41,6 @@ func (component *DevfileComponent) ConvertToContainer() (*corev1.Container, erro
 	}
 	var container corev1.Container
 
-	fmt.Printf("MountSources = %#v\n", component.MountSources)
-
 	container.Image = *component.Image
 	container.Command = component.Command
 	container.Args = component.Args
