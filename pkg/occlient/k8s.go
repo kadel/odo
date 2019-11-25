@@ -1,6 +1,7 @@
 package occlient
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/golang/glog"
@@ -8,6 +9,8 @@ import (
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func (c *Client) CreatePod(pod *corev1.Pod) (*corev1.Pod, error) {
@@ -18,13 +21,7 @@ func (c *Client) CreatePod(pod *corev1.Pod) (*corev1.Pod, error) {
 	return createdPod, nil
 }
 
-func (c *Client) SyncFiles(podSelector string, path string, targetPath string, files []string, delFiles []string, forcePush bool, globExps []string) error {
-
-	// Wait for Pod to be in running state otherwise we can't sync data to it.
-	pod, err := c.WaitAndGetPod(podSelector, corev1.PodRunning, "Waiting for component to start")
-	if err != nil {
-		return errors.Wrapf(err, "error while waiting for pod  %s", podSelector)
-	}
+func (c *Client) SyncFiles(podName string, containerName string, path string, targetPath string, files []string, delFiles []string, forcePush bool, globExps []string) error {
 
 	// Sync the files to the pod
 	s := log.Spinner("Syncing files to the component")
@@ -44,7 +41,7 @@ func (c *Client) SyncFiles(podSelector string, path string, targetPath string, f
 								   So, during the subsequent watch pushing new diff to component pod, the source as a whole doesn't exist at destination dir and hence needs
 								   to be backed up.
 		*/
-		err := c.PropagateDeletes(pod.Name, delFiles, []string{targetPath})
+		err := c.PropagateDeletesToContainer(podName, containerName, delFiles, []string{targetPath})
 		if err != nil {
 			return errors.Wrapf(err, "unable to propagate file deletions %+v", delFiles)
 		}
@@ -60,7 +57,7 @@ func (c *Client) SyncFiles(podSelector string, path string, targetPath string, f
 
 	if forcePush || len(files) > 0 {
 		glog.V(4).Infof("Copying files %s to pod", strings.Join(files, " "))
-		err = c.CopyFile(path, pod.Name, targetPath, files, globExps)
+		err := c.CopyFileToContainer(path, podName, containerName, targetPath, files, globExps)
 		if err != nil {
 			s.End(false)
 			return errors.Wrap(err, "unable push files to pod")
@@ -81,4 +78,50 @@ func (c *Client) CreateDeployment(deployment *appsv1.Deployment) (*appsv1.Deploy
 		return nil, err
 	}
 	return createdDeployment, nil
+}
+
+func (c *Client) GetDeploymentFromName(name string) (*appsv1.Deployment, error) {
+	glog.V(4).Infof("Getting Deployment: %s", name)
+	deploymentConfig, err := c.kubeClient.AppsV1().Deployments(c.Namespace).Get(name, metav1.GetOptions{})
+	if err != nil {
+		if !strings.Contains(err.Error(), fmt.Sprintf(DEPLOYMENT_CONFIG_NOT_FOUND_ERROR_STR, name)) {
+			return nil, errors.Wrapf(err, "unable to get DeploymentConfig %s", name)
+		} else {
+			return nil, DEPLOYMENT_CONFIG_NOT_FOUND
+		}
+	}
+	return deploymentConfig, nil
+}
+
+func (c *Client) GetServiceFromName(serviceName string) (*corev1.Service, error) {
+	return c.kubeClient.CoreV1().Services(c.Namespace).Get(serviceName, metav1.GetOptions{})
+}
+
+func (c *Client) CreateServiceForPorts(serviceName string, podSelector map[string]string, containerPorts []corev1.ContainerPort) (*corev1.Service, error) {
+	// generate and create Service
+	var svcPorts []corev1.ServicePort
+	for _, containerPort := range containerPorts {
+		svcPort := corev1.ServicePort{
+
+			Name:       containerPort.Name,
+			Port:       containerPort.ContainerPort,
+			Protocol:   containerPort.Protocol,
+			TargetPort: intstr.FromInt(int(containerPort.ContainerPort)),
+		}
+		svcPorts = append(svcPorts, svcPort)
+	}
+	svc := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: serviceName,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports:    svcPorts,
+			Selector: podSelector,
+		},
+	}
+	createdSvc, err := c.kubeClient.CoreV1().Services(c.Namespace).Create(&svc)
+	if err != nil {
+		return nil, errors.Wrapf(err, "unable to create Service for %s", serviceName)
+	}
+	return createdSvc, err
 }

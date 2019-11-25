@@ -2,6 +2,7 @@ package component
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/openshift/odo/pkg/odo/genericclioptions"
 	"github.com/openshift/odo/pkg/util"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	ktemplates "k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 )
 
@@ -69,15 +71,6 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	// name of the command that will be used to run the app
 	runCommand := "run webapp"
 
-	buildAction, err := devf.GetCommandAction(buildCommand)
-	if err != nil {
-		return err
-	}
-	runAction, err := devf.GetCommandAction(runCommand)
-	if err != nil {
-		return err
-	}
-
 	// TODO(tkral): remove this
 	// Make sure that .odo directory exists, as  it is needed by fileindexer
 	odoDir := filepath.Join(localPath, ".odo")
@@ -89,39 +82,47 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 		}
 	}
 
+	buildAction, err := devf.GetCommandAction(buildCommand)
+	if err != nil {
+		return err
+	}
+
+	// runAction, err := devf.GetCommandAction(runCommand)
+	// if err != nil {
+	// 	return err
+	// }
+
 	client, err := occlient.New()
 	if err != nil {
 		return err
 	}
 
 	// bootstrap files into the PVC
-
-	// create pvc and pod only if it already doesn't exist
-	//TODO(tkral): temporary hacky way
-	// it should also check that it is in running state
-	buildPod, err := client.GetOnePodFromSelector("podkind.odo.openshfit.io=build")
+	pvc, err := client.GetPVCFromName(projectFilesPVC)
 	if err != nil {
-		glog.V(4).Infof("Forcing force push, because new  PVC and Build Pod is being created")
+		// if pv doesn't exist, create it
+		pvc, err = client.CreatePVC(projectFilesPVC, "1Gi", map[string]string{})
+		if err != nil {
+			return err
+		}
+		// force push if new pvc is being created
 		pdo.forcePush = true
 
-		_, err = client.CreatePVC(projectFilesPVC, "1Gi", map[string]string{})
+	}
+	// TODO(tkral): generate the name based on devfile project info
+	deploymentName := "devfile"
+	deployment, err := client.GetDeploymentFromName(deploymentName)
+	if err != nil {
+		deployment, err = devfile.GenerateFatDeployment(deploymentName, pvc.Name, cheProjectsRoot, *devf, buildCommand, runCommand)
 		if err != nil {
 			return err
 		}
-
-		devfBuildComponent, err := devf.GetComponent(*buildAction.Component)
+		_, err = client.CreateDeployment(deployment)
 		if err != nil {
 			return err
 		}
-		buildContainer, err := devfBuildComponent.ConvertToContainer()
-		if err != nil {
-			return err
-		}
-		pod := devfile.GenerateBuildPod(projectFilesPVC, *buildContainer, cheProjectsRoot)
-		_, err = client.CreatePod(pod)
-		if err != nil {
-			return err
-		}
+		// force push when deployment config is being created
+		pdo.forcePush = true
 	}
 
 	filesChanged, filesDeleted, err := util.RunIndexer(localPath, []string{})
@@ -132,13 +133,17 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	glog.V(5).Infof("filesChanged = %v", filesChanged)
 	glog.V(5).Infof("filesDeleted = %v", filesDeleted)
 
-	// use build container to sync files to volume
-	err = client.SyncFiles("podkind.odo.openshfit.io=build", localPath, projectFilesPath, filesChanged, filesDeleted, pdo.forcePush, []string{})
+	// Wait for Pod to be in running state otherwise we can't sync data to it.
+	pod, err := client.WaitAndGetPod("devfile.odo.openshift.io="+deploymentName, corev1.PodRunning, "Waiting for component to start")
 	if err != nil {
 		return err
 	}
 
-	s := log.SpinnerNoSpin("Building component")
+	err = client.SyncFiles(pod.Name, "build", localPath, projectFilesPath, filesChanged, filesDeleted, pdo.forcePush, []string{})
+	if err != nil {
+		return err
+	}
+	s := log.SpinnerNoSpin("Building source code")
 
 	// use pipes to write output from ExecCMDInContainer in yellow  to 'out' io.Writer
 	pipeReader, pipeWriter := io.Pipe()
@@ -160,44 +165,37 @@ func (pdo *PushDevfileOptions) Run() (err error) {
 	}()
 
 	// TODO(tkral): check Workingdir and Command
-	err = client.ExecCMDInContainer(buildPod.Name,
+	err = client.ExecCMDInContainer(pod.Name, "build",
 		[]string{"sh", "-c", fmt.Sprintf("cd %s && %s", *buildAction.Workdir, *buildAction.Command)},
 		pipeWriter, pipeWriter, nil, false)
 
 	if err != nil {
 		// If we fail, log the output
-		log.Errorf("Unable to build files\n%v", cmdOutput)
+		log.Errorf("Unable to build the source code\n%v", cmdOutput)
 		s.End(false)
 		return err
 	}
 	s.End(true)
 
-	// TODO: check fro deployment
-	runPod, err := client.GetOnePodFromSelector("podkind.odo.openshfit.io=run")
-	if err == nil {
-		// if pod exist delete it
-		errDelete := client.DeletePod(runPod.Name)
-		if errDelete != nil {
-			return errDelete
-		}
+	var superStdout, superStderr bytes.Buffer
+	reloadCmd := []string{"sh", "-c", "/opt/odo/bin/supervisord ctl stop run ; /opt/odo/bin/supervisord ctl start run"}
+	glog.V(4).Infof("Reload command failed %v", reloadCmd)
+	err = client.ExecCMDInContainer(pod.Name, "run", reloadCmd, &superStdout, &superStderr, nil, false)
+	glog.V(4).Infof("stdout: %s", superStdout.String())
+	glog.V(4).Infof("stderr: %s", superStdout.String())
+	if err != nil {
+		return err
 	}
 
-	devfRunComponent, err := devf.GetComponent(*runAction.Component)
+	// Create service if doesn't exist yet
+	svcName := deployment.ObjectMeta.Name
+	_, err = client.GetServiceFromName(svcName)
 	if err != nil {
-		return err
-	}
-	runContainer, err := devfRunComponent.ConvertToContainer()
-	if err != nil {
-		return err
-	}
-	deployment := devfile.GenerateRunDeployment(projectFilesPVC, *runContainer, *runAction.Command, *runAction.Workdir, cheProjectsRoot)
-	_, err = client.CreateDeployment(deployment)
-	if err != nil {
-		return err
-	}
-	_, err = client.CreateService(deployment.ObjectMeta, deployment.Spec.Template.Spec.Containers[0].Ports)
-	if err != nil {
-		return err
+
+		_, err = client.CreateServiceForPorts(svcName, deployment.Spec.Template.Labels, deployment.Spec.Template.Spec.Containers[0].Ports)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

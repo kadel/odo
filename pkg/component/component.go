@@ -735,7 +735,7 @@ func PushLocal(client *occlient.Client, componentName string, applicationName st
 		}
 	}()
 
-	err = client.ExecCMDInContainer(pod.Name,
+	err = client.ExecCMDInContainer(pod.Name, "",
 		// We will use the assemble-and-restart script located within the supervisord container we've created
 		[]string{"/opt/odo/bin/assemble-and-restart"},
 		pipeWriter, pipeWriter, nil, false)

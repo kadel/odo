@@ -2638,6 +2638,10 @@ func (c *Client) GetOnePodFromSelector(selector string) (*corev1.Pod, error) {
 // During copying local source components, localPath represent base directory path whereas copyFiles is empty
 // During `odo watch`, localPath represent base directory path whereas copyFiles contains list of changed Files
 func (c *Client) CopyFile(localPath string, targetPodName string, targetPath string, copyFiles []string, globExps []string) error {
+	return c.CopyFileToContainer(localPath, targetPodName, "", targetPath, copyFiles, globExps)
+}
+
+func (c *Client) CopyFileToContainer(localPath string, targetPodName string, targetContianerName string, targetPath string, copyFiles []string, globExps []string) error {
 
 	// Destination is set to "ToSlash" as all containers being ran within OpenShift / S2I are all
 	// Linux based and thus: "\opt\app-root\src" would not work correctly.
@@ -2661,7 +2665,7 @@ func (c *Client) CopyFile(localPath string, targetPodName string, targetPath str
 	var stdoutMkdir bytes.Buffer
 	var stderrMkdir bytes.Buffer
 	mkdirCmd := []string{"mkdir", "-p", targetPath}
-	errMkdir := c.ExecCMDInContainer(targetPodName, mkdirCmd, &stdoutMkdir, &stderrMkdir, nil, false)
+	errMkdir := c.ExecCMDInContainer(targetPodName, targetContianerName, mkdirCmd, &stdoutMkdir, &stderrMkdir, nil, false)
 	if errMkdir != nil {
 		glog.Errorf("Command '%s' in container failed.\n", strings.Join(mkdirCmd, " "))
 		glog.Errorf("stdout: %s\n", stdoutMkdir.String())
@@ -2669,11 +2673,12 @@ func (c *Client) CopyFile(localPath string, targetPodName string, targetPath str
 		glog.Errorf("err: %s\n", errMkdir.Error())
 		return errMkdir
 	}
-
-	cmdArr := []string{"tar", "xf", "-", "-C", targetPath, "--strip", "1"}
+	// TODO(tkral): why no strip 1?
+	cmdArr := []string{"tar", "xf", "-", "-C", targetPath} //  "--strip", "1"}
+	//cmdArr := []string{"sh", "-c", "cat > test.tar"}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	err := c.ExecCMDInContainer(targetPodName, cmdArr, &stdout, &stderr, reader, false)
+	err := c.ExecCMDInContainer(targetPodName, targetContianerName, cmdArr, &stdout, &stderr, reader, false)
 	if err != nil {
 		glog.Errorf("Command '%s' in container failed.\n", strings.Join(cmdArr, " "))
 		glog.Errorf("stdout: %s\n", stdout.String())
@@ -2920,21 +2925,27 @@ func (c *Client) GetServerVersion() (*ServerInfo, error) {
 }
 
 // ExecCMDInContainer execute command in first container of a pod
-func (c *Client) ExecCMDInContainer(podName string, cmd []string, stdout io.Writer, stderr io.Writer, stdin io.Reader, tty bool) error {
+// containerName can be "" if the pod has only one container
+func (c *Client) ExecCMDInContainer(podName string, containerName string, cmd []string, stdout io.Writer, stderr io.Writer, stdin io.Reader, tty bool) error {
 	glog.V(4).Infof("executing command %v, inside pod %s", cmd, podName)
+	options := &corev1.PodExecOptions{
+		Command: cmd,
+		Stdin:   stdin != nil,
+		Stdout:  stdout != nil,
+		Stderr:  stderr != nil,
+		TTY:     tty,
+	}
+	if containerName != "" {
+		options.Container = containerName
+	}
+
 	req := c.kubeClient.CoreV1().RESTClient().
 		Post().
 		Namespace(c.Namespace).
 		Resource("pods").
 		Name(podName).
 		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Command: cmd,
-			Stdin:   stdin != nil,
-			Stdout:  stdout != nil,
-			Stderr:  stderr != nil,
-			TTY:     tty,
-		}, scheme.ParameterCodec)
+		VersionedParams(options, scheme.ParameterCodec)
 
 	config, err := c.KubeConfig.ClientConfig()
 	if err != nil {
@@ -3104,6 +3115,10 @@ func (c *Client) GetEnvVarsFromDC(dcName string) ([]corev1.EnvVar, error) {
 //	delSrcRelPaths: Paths to be deleted on the remote pod relative to component source base path ex: Compoent src: /abc/src, file deleted: abc/src/foo.lang => relative path: foo.lang
 //	s2iPaths: Slice of all s2i paths -- deployment dir, destination dir, working dir, etc..
 func (c *Client) PropagateDeletes(targetPodName string, delSrcRelPaths []string, s2iPaths []string) error {
+	return c.PropagateDeletesToContainer(targetPodName, "", delSrcRelPaths, s2iPaths)
+}
+
+func (c *Client) PropagateDeletesToContainer(targetPodName string, containerName string, delSrcRelPaths []string, s2iPaths []string) error {
 	reader, writer := io.Pipe()
 	var rmPaths []string
 	if len(s2iPaths) == 0 || len(delSrcRelPaths) == 0 {
@@ -3120,7 +3135,7 @@ func (c *Client) PropagateDeletes(targetPodName string, delSrcRelPaths []string,
 	cmdArr := []string{"rm", "-rf"}
 	cmdArr = append(cmdArr, rmPaths...)
 
-	err := c.ExecCMDInContainer(targetPodName, cmdArr, writer, writer, reader, false)
+	err := c.ExecCMDInContainer(targetPodName, containerName, cmdArr, writer, writer, reader, false)
 	if err != nil {
 		return err
 	}
