@@ -1,6 +1,7 @@
 package component
 
 import (
+	"bytes"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,9 +30,24 @@ type Adapter struct {
 	common.AdapterContext
 }
 
+func (a Adapter) Test() (err error) {
+	fmt.Println("tests")
+	podName := "demo-backend-7b579cfc79-29gj8"
+	containerName := "tools"
+	cmd := []string{"ls", "-lah"}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err1 := a.Client.ExecCMDInContainer(podName, containerName, cmd, &stdout, &stderr, nil, false)
+	fmt.Printf("stdout: %s\n", stdout.String())
+	fmt.Printf("stderr: %s\n", stderr.String())
+
+	return err1
+}
+
 // Create generates the Kubernetes resources, adds the devfile storage and
 // updates the component if a matching component exists or creates one if it doesn't exist
 func (a Adapter) Create() (err error) {
+	return a.Test()
 	componentName := a.ComponentName
 
 	labels := map[string]string{

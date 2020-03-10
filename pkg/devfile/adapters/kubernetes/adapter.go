@@ -26,6 +26,7 @@ func New(adapterContext common.AdapterContext, client kclient.Client) Adapter {
 func (k Adapter) Start() error {
 
 	err := k.componentAdapter.Create()
+	//err := k.componentAdapter.Test()
 	if err != nil {
 		return errors.Wrap(err, "Failed to create the component")
 	}
