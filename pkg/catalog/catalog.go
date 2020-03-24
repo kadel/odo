@@ -17,7 +17,7 @@ import (
 
 // DevfileRegistries contains the links of all devfile registries
 var DevfileRegistries = []string{
-	"https://raw.githubusercontent.com/elsony/devfile-registry/master",
+	"https://raw.githubusercontent.com/kadel/devfile-registry/add-maven-and-index-generator",
 	"https://che-devfile-registry.openshift.io/",
 }
 
