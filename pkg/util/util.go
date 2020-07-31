@@ -41,7 +41,7 @@ import (
 // HTTPRequestTimeout configures timeout of all HTTP requests
 const (
 	HTTPRequestTimeout    = 20 * time.Second // HTTPRequestTimeout configures timeout of all HTTP requests
-	ResponseHeaderTimeout = 10 * time.Second // ResponseHeaderTimeout is the timeout to retrieve the server's response headers
+	ResponseHeaderTimeout = 20 * time.Second // ResponseHeaderTimeout is the timeout to retrieve the server's response headers
 	ModeReadWriteFile     = 0600             // default Permission for a file
 	CredentialPrefix      = "odo-"           // CredentialPrefix is the prefix of the credential that uses to access secure registry
 )
