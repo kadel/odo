@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -29,7 +28,6 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/gobwas/glob"
-	"github.com/google/go-github/github"
 	"github.com/gregjones/httpcache"
 	"github.com/gregjones/httpcache/diskcache"
 	"github.com/openshift/odo/pkg/testingutil/filesystem"
@@ -837,64 +835,6 @@ func ConvertGitSSHRemoteToHTTPS(remote string) string {
 	remote = strings.Replace(remote, ":", "/", 1)
 	remote = strings.Replace(remote, "git@", "https://", 1)
 	return remote
-}
-
-// GetGitHubZipURL downloads a repo from a URL to a destination
-func GetGitHubZipURL(repoURL string, branch string, startPoint string) (string, error) {
-	var url string
-	// Convert ssh remote to https
-	if strings.HasPrefix(repoURL, "git@") {
-		repoURL = ConvertGitSSHRemoteToHTTPS(repoURL)
-	}
-	// expecting string in format 'https://github.com/<owner>/<repo>'
-	if strings.HasPrefix(repoURL, "https://") {
-		repoURL = strings.TrimPrefix(repoURL, "https://")
-	} else {
-		return "", errors.New("Invalid GitHub URL. Please use https://")
-	}
-
-	repoArray := strings.Split(repoURL, "/")
-	if len(repoArray) < 2 {
-		return url, errors.New("Invalid GitHub URL: Could not extract owner and repo, expecting 'https://github.com/<owner>/<repo>'")
-	}
-
-	owner := repoArray[1]
-	if len(owner) == 0 {
-		return url, errors.New("Invalid GitHub URL: owner cannot be empty. Expecting 'https://github.com/<owner>/<repo>'")
-	}
-
-	repo := repoArray[2]
-	if len(repo) == 0 {
-		return url, errors.New("Invalid GitHub URL: repo cannot be empty. Expecting 'https://github.com/<owner>/<repo>'")
-	}
-
-	if strings.HasSuffix(repo, ".git") {
-		repo = strings.TrimSuffix(repo, ".git")
-	}
-
-	var ref string
-	if branch != "" && startPoint != "" {
-		return url, errors.Errorf("Branch %s and StartPoint %s specified as project reference, please only specify one", branch, startPoint)
-	} else if branch != "" {
-		ref = branch
-	} else if startPoint != "" {
-		ref = startPoint
-	} else {
-		// Default to master if branch and startpoint are not set
-		ref = defaultGithubRef
-	}
-
-	client := github.NewClient(nil)
-
-	opt := &github.RepositoryContentGetOptions{Ref: ref}
-
-	URL, response, err := client.Repositories.GetArchiveLink(context.Background(), owner, repo, "zipball", opt, true)
-	if err != nil {
-		errMessage := fmt.Sprintf("Error getting zip url. Response: %s.", response.Status)
-		return url, errors.New(errMessage)
-	}
-	url = URL.String()
-	return url, nil
 }
 
 // GetAndExtractZip downloads a zip file from a URL with a http prefix or

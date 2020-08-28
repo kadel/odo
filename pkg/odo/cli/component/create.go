@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -12,6 +11,7 @@ import (
 	"github.com/zalando/go-keyring"
 	"k8s.io/klog"
 
+	git "github.com/go-git/go-git/v5"
 	"github.com/openshift/odo/pkg/catalog"
 	"github.com/openshift/odo/pkg/component"
 	"github.com/openshift/odo/pkg/config"
@@ -895,25 +895,25 @@ func (co *CreateOptions) downloadStarterProject(projectPassed string, interactiv
 		return nil
 	}
 
-	var project *common.DevfileStarterProject
 	// Parse devfile and validate
 	devObj, err := devfile.ParseAndValidate(DevfilePath)
 	if err != nil {
 		return err
 	}
 	// Retrieve starter projects
-	projects := devObj.Data.GetStarterProjects()
+	starterProjects := devObj.Data.GetStarterProjects()
 
+	var starterProject *common.DevfileStarterProject
 	if interactive {
-		project = getStarterProjectInteractiveMode(projects)
+		starterProject = getStarterProjectInteractiveMode(starterProjects)
 	} else {
-		project, err = getStarterProjectFromFlag(projects, projectPassed)
+		starterProject, err = getStarterProjectFromFlag(starterProjects, projectPassed)
 		if err != nil {
 			return err
 		}
 	}
 
-	if project == nil {
+	if starterProject == nil {
 		return nil
 	}
 
@@ -923,19 +923,14 @@ func (co *CreateOptions) downloadStarterProject(projectPassed string, interactiv
 		return errors.Wrapf(err, "Could not get the current working directory.")
 	}
 
-	if project.ClonePath != "" {
-		clonePath := project.ClonePath
-		if runtime.GOOS == "windows" {
-			//TODO: This is a bad implementation.. we should be using FromSlash
-			// https://golang.org/pkg/path/filepath/#FromSlash
-			clonePath = strings.Replace(clonePath, "\\", "/", -1)
-		}
+	if starterProject.ClonePath != "" {
+		clonePath := filepath.FromSlash(starterProject.ClonePath)
 
 		path = filepath.Join(path, clonePath)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			err = os.MkdirAll(path, os.FileMode(0755))
 			if err != nil {
-				return errors.Wrap(err, "failed creating folder with path: "+path)
+				return errors.Wrapf(err, "failed creating folder with path: %s", path)
 			}
 		}
 	}
@@ -946,43 +941,70 @@ func (co *CreateOptions) downloadStarterProject(projectPassed string, interactiv
 		return err
 	}
 
-	var logUrl, url, sparseDir string
-	if project.Git != nil {
-		if strings.Contains(project.Git.Location, "github.com") {
-			url, err = util.GetGitHubZipURL(project.Git.Location, project.Git.Branch, project.Git.StartPoint)
-			if err != nil {
-				return err
-			}
-			sparseDir = project.Git.SparseCheckoutDir
+	log.Info("\nStarter Project")
+
+	if starterProject.Git != nil || starterProject.Github != nil {
+
+		projectSource := common.GitLikeProjectSource{}
+		if starterProject.Git != nil {
+			projectSource = starterProject.Git.GitLikeProjectSource
 		} else {
-			return errors.Errorf("project type git with non github url not supported")
+			projectSource = starterProject.Github.GitLikeProjectSource
 		}
-		logUrl = project.Git.Location
-	} else if project.Github != nil {
-		url, err = util.GetGitHubZipURL(project.Github.Location, project.Github.Branch, project.Github.StartPoint)
+
+		// get git checkout information
+		// if there are mulitple remotes we are ignoring them, as we don't need to setup git repostiory as it is defined here,
+		// the only thing that we need is to download the content
+		var remoteName, remoteUrl string
+		reference := "HEAD"
+		if len(projectSource.Remotes) > 1 {
+			if projectSource.CheckoutFrom == nil {
+				return fmt.Errorf("starterProject %s has multiple remotes, but no checkoutFrom is defined", starterProject.Name)
+			}
+			remoteName = projectSource.CheckoutFrom.Remote
+			if val, ok := projectSource.Remotes[remoteName]; ok {
+				remoteUrl = val
+			}
+			reference = projectSource.CheckoutFrom.Revision
+		} else {
+			// there is only one remote, using range to get it as there are not indexes
+			for name, url := range projectSource.Remotes {
+				remoteName = name
+				remoteUrl = url
+			}
+		}
+
+		downloadSpinner := log.Spinnerf("Downloading starter project %s from %s", starterProject.Name, remoteUrl)
+
+		_, err := git.PlainClone(path, false, &git.CloneOptions{
+			URL:           remoteUrl,
+			RemoteName:    remoteName,
+			ReferenceName: reference,
+			singleBranch:  true,
+			Progress:      os.Stdout,
+			// we don't need history for starter projects
+			Depth: 1,
+		})
 		if err != nil {
+			downloadSpinner.End(false)
 			return err
 		}
-		logUrl = project.Github.Location
-		sparseDir = project.Github.SparseCheckoutDir
-	} else if project.Zip != nil {
-		url = project.Zip.Location
-		logUrl = project.Zip.Location
-		sparseDir = project.Zip.SparseCheckoutDir
+
+	} else if starterProject.Zip != nil {
+		url := starterProject.Zip.Location
+		logUrl := starterProject.Zip.Location
+		sparseDir := starterProject.Zip.SparseCheckoutDir
+		downloadSpinner := log.Spinnerf("Downloading starter project %s from %s", starterProject.Name, logUrl)
+		err := checkoutProject(sparseDir, url, path)
+		if err != nil {
+			downloadSpinner.End(false)
+			return err
+		}
+		downloadSpinner.End(true)
 	} else {
 		return errors.Errorf("Project type not supported")
 	}
 
-	log.Info("\nStarter Project")
-	downloadSpinner := log.Spinnerf("Downloading starter project %s from %s", project.Name, logUrl)
-	err = checkoutProject(sparseDir, url, path)
-
-	if err != nil {
-		downloadSpinner.End(false)
-		return err
-	}
-
-	downloadSpinner.End(true)
 	return nil
 }
 
