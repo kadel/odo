@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/olekukonko/tablewriter"
-	"github.com/openshift/odo/pkg/preference"
 	"io"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/olekukonko/tablewriter"
+	"github.com/openshift/odo/pkg/preference"
 
 	"github.com/openshift/odo/pkg/devfile/adapters/common"
 	"github.com/openshift/odo/pkg/log"
@@ -24,14 +25,19 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-const (
-	// waitForPodTimeOut controls how long we should wait for a pod before giving up
-	waitForPodTimeOut = 240 * time.Second
-)
-
 // WaitAndGetPod block and waits until pod matching selector is in the desired phase
 // desiredPhase cannot be PodFailed or PodUnknown
 func (c *Client) WaitAndGetPod(watchOptions metav1.ListOptions, desiredPhase corev1.PodPhase, waitMessage string, hideSpinner bool) (*corev1.Pod, error) {
+
+	// Try to grab the preference in order to set a timeout.. but if not, we'll use the default.
+	pushTimeout := preference.DefaultPushTimeout * time.Second
+	cfg, configReadErr := preference.New()
+	if configReadErr != nil {
+		klog.V(3).Info(errors.Wrap(configReadErr, "unable to read config file"))
+	} else {
+		pushTimeout = time.Duration(cfg.GetPushTimeout()) * time.Second
+	}
+
 	klog.V(3).Infof("Waiting for %s pod", watchOptions.LabelSelector)
 	var s *log.Status
 	if !hideSpinner {
@@ -93,8 +99,8 @@ func (c *Client) WaitAndGetPod(watchOptions metav1.ListOptions, desiredPhase cor
 		return val, nil
 	case err := <-watchErrorChannel:
 		return nil, err
-	case <-time.After(waitForPodTimeOut):
-		return nil, errors.Errorf("waited %s but couldn't find running pod matching selector: '%s'", waitForPodTimeOut, watchOptions.LabelSelector)
+	case <-time.After(pushTimeout):
+		return nil, errors.Errorf("waited %s but couldn't find running pod matching selector: '%s'", pushTimeout, watchOptions.LabelSelector)
 	}
 }
 
