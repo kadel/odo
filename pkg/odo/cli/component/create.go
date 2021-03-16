@@ -899,7 +899,7 @@ func (co *CreateOptions) Run() (err error) {
 			return err
 		}
 		if log.IsJSON() {
-			co.DevfileJSON()
+			return co.DevfileJSON()
 		}
 		return nil
 	}
@@ -928,8 +928,9 @@ func (co *CreateOptions) Run() (err error) {
 			log.Italic("\nPlease use `odo push` command to create the component with source deployed")
 		}
 		if log.IsJSON() {
-			co.DevfileJSON()
+			return co.DevfileJSON()
 		}
+		return nil
 	}
 
 	// If not, we run s2i (if /the --s2i parameter has been passed in).
