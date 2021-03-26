@@ -50,7 +50,7 @@ func (c *Client) CreateServiceInstance(serviceName string, serviceType string, s
 				},
 				Parameters: serviceInstanceParameters,
 			},
-		}, metav1.CreateOptions{})
+		}, metav1.CreateOptions{FieldManager: "odo"})
 
 	if err != nil {
 		return errors.Wrapf(err, "unable to create the service instance %s for the service type %s and plan %s", serviceName, serviceType, servicePlan)
@@ -204,7 +204,7 @@ func (c *Client) CreateServiceBinding(bindingName string, namespace string, labe
 				},
 				SecretName: bindingName,
 			},
-		}, metav1.CreateOptions{})
+		}, metav1.CreateOptions{FieldManager: "odo"})
 
 	if err != nil {
 		return errors.Wrap(err, "Creation of the secret failed")

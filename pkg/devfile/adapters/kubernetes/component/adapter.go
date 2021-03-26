@@ -392,29 +392,6 @@ func (a Adapter) createOrUpdateComponent(componentExists bool, ei envinfo.EnvSpe
 		return err
 	}
 
-	// // Get ServiceBinding Secret name for each Link
-	// var sbSecrets []string
-	// for _, link := range ei.GetLink() {
-	// 	sb, err := a.Client.GetDynamicResource(kclient.ServiceBindingGroup, kclient.ServiceBindingVersion, kclient.ServiceBindingResource, link.Name)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	secret, found, err := unstructured.NestedString(sb.Object, "status", "secret")
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	if !found {
-	// 		return fmt.Errorf("unable to find secret in ServiceBinding %s", link.Name)
-	// 	}
-	// 	sbSecrets = append(sbSecrets, secret)
-	// }
-
-	// // set EnvFrom to the container that's supposed to have link to the Operator backed service
-	// containers, err = utils.UpdateContainerWithEnvFromSecrets(containers, a.Devfile, a.devfileRunCmd, ei, sbSecrets)
-	// if err != nil {
-	// 	return err
-	// }
-
 	objectMeta := generator.GetObjectMeta(componentName, a.Client.Namespace, labels, nil)
 	supervisordInitContainer := kclient.GetBootstrapSupervisordInitContainer()
 	initContainers, err := utils.GetPreStartInitContainers(a.Devfile, containers)

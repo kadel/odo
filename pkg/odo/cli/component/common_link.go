@@ -128,13 +128,16 @@ func (o *commonLinkOptions) complete(name string, cmd *cobra.Command, args []str
 		// deploymentSelfLinkSplit := strings.Split(deployment.SelfLink, "/")
 
 		// Populate the application selector field in service binding request
-		o.serviceBinding.Spec.Application.Ref = servicebinding.Ref{
-			Group:    "apps",        // "apps" in above example output
-			Version:  "v1",          // "v1" in above example output
-			Resource: "deployments", // "deployments" in above example output
+		o.serviceBinding.Spec.Application = &servicebinding.Application{
+			Ref: servicebinding.Ref{
+				Group:    "apps",        // "apps" in above example output
+				Version:  "v1",          // "v1" in above example output
+				Resource: "deployments", // "deployments" in above example output
+			},
 		}
 
 		o.serviceBinding.Spec.Application.Name = componentName
+		o.serviceBinding.Spec.BindAsFiles = true
 
 		return nil
 	}
