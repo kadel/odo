@@ -16,10 +16,9 @@ import (
 	"github.com/openshift/odo/pkg/secret"
 	svc "github.com/openshift/odo/pkg/service"
 	"github.com/openshift/odo/pkg/util"
-	servicebinding "github.com/redhat-developer/service-binding-operator/pkg/apis/operators/v1alpha1"
+	servicebinding "github.com/redhat-developer/service-binding-operator/api/v1alpha1"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
 )
 
@@ -126,15 +125,13 @@ func (o *commonLinkOptions) complete(name string, cmd *cobra.Command, args []str
 
 		// This is a really hacky way to get group, version and resource info but I couldn't find better one.
 		// A sample "deploymentSelfLinkSplit" looks like: [ apis apps v1 namespaces myproject deployments nodejs ]
-		deploymentSelfLinkSplit := strings.Split(deployment.SelfLink, "/")
+		// deploymentSelfLinkSplit := strings.Split(deployment.SelfLink, "/")
 
 		// Populate the application selector field in service binding request
-		o.serviceBinding.Spec.Application = &servicebinding.Application{
-			GroupVersionResource: metav1.GroupVersionResource{
-				Group:    deploymentSelfLinkSplit[2], // "apps" in above example output
-				Version:  deploymentSelfLinkSplit[3], // "v1" in above example output
-				Resource: deploymentSelfLinkSplit[6], // "deployments" in above example output
-			},
+		o.serviceBinding.Spec.Application.Ref = servicebinding.Ref{
+			Group:    "apps",        // "apps" in above example output
+			Version:  "v1",          // "v1" in above example output
+			Resource: "deployments", // "deployments" in above example output
 		}
 
 		o.serviceBinding.Spec.Application.Name = componentName
@@ -232,15 +229,18 @@ func (o *commonLinkOptions) validate(wait bool) (err error) {
 		}
 
 		service := servicebinding.Service{
-			GroupVersionKind: metav1.GroupVersionKind{
-				Group:   group,
-				Version: version,
-				Kind:    kind,
+			NamespacedRef: servicebinding.NamespacedRef{
+				Ref: servicebinding.Ref{
+					Group:   group,
+					Version: version,
+					Kind:    kind,
+				},
+				Namespace: &o.KClient.Namespace,
 			},
-			Namespace: &o.KClient.Namespace,
 		}
+
 		service.Name = o.serviceName
-		o.serviceBinding.Spec.Services = &[]servicebinding.Service{service}
+		o.serviceBinding.Spec.Services = []servicebinding.Service{service}
 
 		return nil
 	}

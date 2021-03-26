@@ -1,6 +1,7 @@
 package component
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
@@ -392,28 +392,28 @@ func (a Adapter) createOrUpdateComponent(componentExists bool, ei envinfo.EnvSpe
 		return err
 	}
 
-	// Get ServiceBinding Secret name for each Link
-	var sbSecrets []string
-	for _, link := range ei.GetLink() {
-		sb, err := a.Client.GetDynamicResource(kclient.ServiceBindingGroup, kclient.ServiceBindingVersion, kclient.ServiceBindingResource, link.Name)
-		if err != nil {
-			return err
-		}
-		secret, found, err := unstructured.NestedString(sb.Object, "status", "secret")
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fmt.Errorf("unable to find secret in ServiceBinding %s", link.Name)
-		}
-		sbSecrets = append(sbSecrets, secret)
-	}
+	// // Get ServiceBinding Secret name for each Link
+	// var sbSecrets []string
+	// for _, link := range ei.GetLink() {
+	// 	sb, err := a.Client.GetDynamicResource(kclient.ServiceBindingGroup, kclient.ServiceBindingVersion, kclient.ServiceBindingResource, link.Name)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	secret, found, err := unstructured.NestedString(sb.Object, "status", "secret")
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if !found {
+	// 		return fmt.Errorf("unable to find secret in ServiceBinding %s", link.Name)
+	// 	}
+	// 	sbSecrets = append(sbSecrets, secret)
+	// }
 
-	// set EnvFrom to the container that's supposed to have link to the Operator backed service
-	containers, err = utils.UpdateContainerWithEnvFromSecrets(containers, a.Devfile, a.devfileRunCmd, ei, sbSecrets)
-	if err != nil {
-		return err
-	}
+	// // set EnvFrom to the container that's supposed to have link to the Operator backed service
+	// containers, err = utils.UpdateContainerWithEnvFromSecrets(containers, a.Devfile, a.devfileRunCmd, ei, sbSecrets)
+	// if err != nil {
+	// 	return err
+	// }
 
 	objectMeta := generator.GetObjectMeta(componentName, a.Client.Namespace, labels, nil)
 	supervisordInitContainer := kclient.GetBootstrapSupervisordInitContainer()
@@ -488,7 +488,7 @@ func (a Adapter) createOrUpdateComponent(componentExists bool, ei envinfo.EnvSpe
 			return err
 		}
 		klog.V(2).Infof("Successfully updated component %v", componentName)
-		oldSvc, err := a.Client.KubeClient.CoreV1().Services(a.Client.Namespace).Get(componentName, metav1.GetOptions{})
+		oldSvc, err := a.Client.KubeClient.CoreV1().Services(a.Client.Namespace).Get(context.TODO(), componentName, metav1.GetOptions{})
 		ownerReference := generator.GetOwnerReference(deployment)
 		service.OwnerReferences = append(service.OwnerReferences, ownerReference)
 		if err != nil {
@@ -510,7 +510,7 @@ func (a Adapter) createOrUpdateComponent(componentExists bool, ei envinfo.EnvSpe
 				}
 				klog.V(2).Infof("Successfully update Service for component %s", componentName)
 			} else {
-				err = a.Client.KubeClient.CoreV1().Services(a.Client.Namespace).Delete(componentName, &metav1.DeleteOptions{})
+				err = a.Client.KubeClient.CoreV1().Services(a.Client.Namespace).Delete(context.TODO(), componentName, metav1.DeleteOptions{})
 				if err != nil {
 					return err
 				}

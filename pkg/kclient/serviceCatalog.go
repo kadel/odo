@@ -1,8 +1,11 @@
 package kclient
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+
 	scv1beta1 "github.com/kubernetes-sigs/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	"github.com/openshift/odo/pkg/util"
 	"github.com/pkg/errors"
@@ -10,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog"
-	"sort"
 )
 
 // serviceInstanceParameters converts a map of variable assignments to a byte encoded json document,
@@ -30,7 +32,7 @@ func (c *Client) CreateServiceInstance(serviceName string, serviceType string, s
 		return errors.Wrap(err, "unable to create the service instance parameters")
 	}
 
-	_, err = c.serviceCatalogClient.ServiceInstances(c.Namespace).Create(
+	_, err = c.serviceCatalogClient.ServiceInstances(c.Namespace).Create(context.TODO(),
 		&scv1beta1.ServiceInstance{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "ServiceInstance",
@@ -48,7 +50,7 @@ func (c *Client) CreateServiceInstance(serviceName string, serviceType string, s
 				},
 				Parameters: serviceInstanceParameters,
 			},
-		})
+		}, metav1.CreateOptions{})
 
 	if err != nil {
 		return errors.Wrapf(err, "unable to create the service instance %s for the service type %s and plan %s", serviceName, serviceType, servicePlan)
@@ -66,7 +68,7 @@ func (c *Client) CreateServiceInstance(serviceName string, serviceType string, s
 // ListServiceInstances returns list service instances
 func (c *Client) ListServiceInstances(selector string) ([]scv1beta1.ServiceInstance, error) {
 	// List ServiceInstance according to given selectors
-	svcList, err := c.serviceCatalogClient.ServiceInstances(c.Namespace).List(metav1.ListOptions{LabelSelector: selector})
+	svcList, err := c.serviceCatalogClient.ServiceInstances(c.Namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to list ServiceInstances")
 	}
@@ -91,12 +93,12 @@ func (c *Client) DeleteServiceInstance(labels map[string]string) error {
 	// Iterating over serviceInstance List and deleting one by one
 	for _, serviceInstance := range serviceInstances {
 		// we need to delete the ServiceBinding before deleting the ServiceInstance
-		err = c.serviceCatalogClient.ServiceBindings(c.Namespace).Delete(serviceInstance.Name, &metav1.DeleteOptions{})
+		err = c.serviceCatalogClient.ServiceBindings(c.Namespace).Delete(context.TODO(), serviceInstance.Name, metav1.DeleteOptions{})
 		if err != nil {
 			return errors.Wrap(err, "unable to delete serviceBinding")
 		}
 		// now we perform the actual deletion
-		err = c.serviceCatalogClient.ServiceInstances(c.Namespace).Delete(serviceInstance.Name, &metav1.DeleteOptions{})
+		err = c.serviceCatalogClient.ServiceInstances(c.Namespace).Delete(context.TODO(), serviceInstance.Name, metav1.DeleteOptions{})
 		if err != nil {
 			return errors.Wrap(err, "unable to delete serviceInstance")
 		}
@@ -112,7 +114,7 @@ func (c *Client) GetClusterServiceClass(serviceName string) (*scv1beta1.ClusterS
 	opts := metav1.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector("spec.externalName", serviceName).String(),
 	}
-	searchResults, err := c.serviceCatalogClient.ClusterServiceClasses().List(opts)
+	searchResults, err := c.serviceCatalogClient.ClusterServiceClasses().List(context.TODO(), opts)
 	if err != nil {
 		return nil, fmt.Errorf("unable to search classes by name (%s)", err)
 	}
@@ -127,7 +129,7 @@ func (c *Client) GetClusterServiceClass(serviceName string) (*scv1beta1.ClusterS
 
 // ListClusterServiceClasses queries the service service catalog to get available clusterServiceClasses
 func (c *Client) ListClusterServiceClasses() ([]scv1beta1.ClusterServiceClass, error) {
-	classList, err := c.serviceCatalogClient.ClusterServiceClasses().List(metav1.ListOptions{})
+	classList, err := c.serviceCatalogClient.ClusterServiceClasses().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to list cluster service classes")
 	}
@@ -158,7 +160,7 @@ func (c *Client) ListServiceClassesByCategory() (categories map[string][]scv1bet
 
 // ListClusterServicePlans returns list of available plans
 func (c *Client) ListClusterServicePlans() ([]scv1beta1.ClusterServicePlan, error) {
-	planList, err := c.serviceCatalogClient.ClusterServicePlans().List(metav1.ListOptions{})
+	planList, err := c.serviceCatalogClient.ClusterServicePlans().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get cluster service plan")
 	}
@@ -174,7 +176,7 @@ func (c *Client) ListClusterServicePlansByServiceName(serviceName string) ([]scv
 		FieldSelector: fields.OneTermEqualSelector("spec.clusterServiceClassRef.name", serviceName).String(),
 	}
 
-	searchResults, err := c.serviceCatalogClient.ClusterServicePlans().List(opts)
+	searchResults, err := c.serviceCatalogClient.ClusterServicePlans().List(context.TODO(), opts)
 	if err != nil {
 		return nil, fmt.Errorf("unable to search plans for service name '%s', (%s)", serviceName, err)
 	}
@@ -183,13 +185,13 @@ func (c *Client) ListClusterServicePlansByServiceName(serviceName string) ([]scv
 
 // GetServiceBinding returns the ServiceBinding named serviceName in the namespace namespace
 func (c *Client) GetServiceBinding(serviceName string, namespace string) (*scv1beta1.ServiceBinding, error) {
-	return c.serviceCatalogClient.ServiceBindings(namespace).Get(serviceName, metav1.GetOptions{})
+	return c.serviceCatalogClient.ServiceBindings(namespace).Get(context.TODO(), serviceName, metav1.GetOptions{})
 }
 
 // CreateServiceBinding creates a ServiceBinding (essentially a secret) within the namespace of the
 // service instance created using the service's parameters.
 func (c *Client) CreateServiceBinding(bindingName string, namespace string, labels map[string]string) error {
-	_, err := c.serviceCatalogClient.ServiceBindings(namespace).Create(
+	_, err := c.serviceCatalogClient.ServiceBindings(namespace).Create(context.TODO(),
 		&scv1beta1.ServiceBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      bindingName,
@@ -202,7 +204,7 @@ func (c *Client) CreateServiceBinding(bindingName string, namespace string, labe
 				},
 				SecretName: bindingName,
 			},
-		})
+		}, metav1.CreateOptions{})
 
 	if err != nil {
 		return errors.Wrap(err, "Creation of the secret failed")
@@ -214,7 +216,7 @@ func (c *Client) CreateServiceBinding(bindingName string, namespace string, labe
 // ListMatchingPlans retrieves a map associating service plan name to service plan instance associated with the specified service
 // class
 func (c *Client) ListMatchingPlans(class scv1beta1.ClusterServiceClass) (plans map[string]scv1beta1.ClusterServicePlan, err error) {
-	planList, err := c.serviceCatalogClient.ClusterServicePlans().List(metav1.ListOptions{
+	planList, err := c.serviceCatalogClient.ClusterServicePlans().List(context.TODO(), metav1.ListOptions{
 		FieldSelector: "spec.clusterServiceClassRef.name==" + class.Spec.ExternalID,
 	})
 
@@ -229,7 +231,7 @@ func (c *Client) ListMatchingPlans(class scv1beta1.ClusterServiceClass) (plans m
 func (c *Client) ListServiceInstanceLabelValues(label string, selector string) ([]string, error) {
 
 	// List ServiceInstance according to given selectors
-	svcList, err := c.serviceCatalogClient.ServiceInstances(c.Namespace).List(metav1.ListOptions{LabelSelector: selector})
+	svcList, err := c.serviceCatalogClient.ServiceInstances(c.Namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to list ServiceInstances")
 	}
