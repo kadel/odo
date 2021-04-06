@@ -17,9 +17,13 @@ import (
 	svc "github.com/openshift/odo/pkg/service"
 	"github.com/openshift/odo/pkg/util"
 	servicebinding "github.com/redhat-developer/service-binding-operator/api/v1alpha1"
+	"github.com/redhat-developer/service-binding-operator/pkg/reconcile/pipeline/builder"
+	"github.com/redhat-developer/service-binding-operator/pkg/reconcile/pipeline/context"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const unlink = "unlink"
@@ -80,14 +84,14 @@ func (o *commonLinkOptions) complete(name string, cmd *cobra.Command, args []str
 	}
 
 	if o.csvSupport && o.Context.EnvSpecificInfo != nil {
-		serviceBindingSupport, err := o.Client.GetKubeClient().IsServiceBindingSupported()
-		if err != nil {
-			return err
-		}
+		// serviceBindingSupport, err := o.Client.GetKubeClient().IsServiceBindingSupported()
+		// if err != nil {
+		// 	return err
+		// }
 
-		if !serviceBindingSupport {
-			return fmt.Errorf("please install Service Binding Operator to be able to create/delete a link\nrefer https://odo.dev/docs/install-service-binding-operator")
-		}
+		// if !serviceBindingSupport {
+		// 	return fmt.Errorf("please install Service Binding Operator to be able to create/delete a link\nrefer https://odo.dev/docs/install-service-binding-operator")
+		// }
 
 		o.serviceType, o.serviceName, err = svc.IsOperatorServiceNameValid(suppliedName)
 		if err != nil {
@@ -108,8 +112,7 @@ func (o *commonLinkOptions) complete(name string, cmd *cobra.Command, args []str
 		// service binding request name will be like <component-name>-<service-type>-<service-name>. For example: nodejs-etcdcluster-example
 		o.serviceBinding.Name = getServiceBindingName(componentName, o.serviceType, o.serviceName)
 		o.serviceBinding.Namespace = o.EnvSpecificInfo.GetNamespace()
-		truePtr := true
-		o.serviceBinding.Spec.DetectBindingResources = &truePtr // because we want the operator what to bind from the service
+		o.serviceBinding.Spec.DetectBindingResources = true // because we want the operator what to bind from the service
 
 		deployment, err := o.KClient.GetDeploymentByName(componentName)
 		if err != nil {
@@ -137,8 +140,8 @@ func (o *commonLinkOptions) complete(name string, cmd *cobra.Command, args []str
 		}
 
 		o.serviceBinding.Spec.Application.Name = componentName
-		o.serviceBinding.Spec.BindAsFiles = true
-
+		var falseptr = false
+		o.serviceBinding.Spec.BindAsFiles = &falseptr
 		return nil
 	}
 
@@ -299,22 +302,36 @@ func (o *commonLinkOptions) run() (err error) {
 
 		// convert service binding request into a ma[string]interface{} type so
 		// as to use it with dynamic client
-		serviceBindingMap := make(map[string]interface{})
-		intermediate, _ := json.Marshal(o.serviceBinding)
-		err = json.Unmarshal(intermediate, &serviceBindingMap)
-		if err != nil {
-			return err
-		}
+		// serviceBindingMap := make(map[string]interface{})
+		// intermediate, _ := json.Marshal(o.serviceBinding)
+		// err = json.Unmarshal(intermediate, &serviceBindingMap)
+		// if err != nil {
+		// 	return err
+		// }
 
-		// this creates a link by creating a service of type
-		// "ServiceBindingRequest" from the Operator "ServiceBindingOperator".
-		err = o.KClient.CreateDynamicResource(serviceBindingMap, kclient.ServiceBindingGroup, kclient.ServiceBindingVersion, kclient.ServiceBindingResource)
-		if err != nil {
-			if strings.Contains(err.Error(), "already exists") {
-				return fmt.Errorf("component %q is already linked with the service %q", o.Context.EnvSpecificInfo.GetName(), o.suppliedName)
-			}
-			return err
-		}
+		// // this creates a link by creating a service of type
+		// // "ServiceBindingRequest" from the Operator "ServiceBindingOperator".
+		// err = o.KClient.CreateDynamicResource(serviceBindingMap, kclient.ServiceBindingGroup, kclient.ServiceBindingVersion, kclient.ServiceBindingResource)
+		// if err != nil {
+		// 	if strings.Contains(err.Error(), "already exists") {
+		// 		return fmt.Errorf("component %q is already linked with the service %q", o.Context.EnvSpecificInfo.GetName(), o.suppliedName)
+		// 	}
+		// 	return err
+		// }
+
+		mgr, _ := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+			Scheme: runtime.NewScheme(),
+		})
+		out, _ := json.MarshalIndent(o.serviceBinding, " ", " ")
+		fmt.Printf("%s\n", string(out))
+		pipeline := builder.DefaultBuilder.WithContextProvider(context.Provider(o.KClient.DynamicClient, context.ResourceLookup(mgr.GetRESTMapper()))).Build()
+		repeat, err := pipeline.Process(o.serviceBinding)
+		// you can read secret name from the passed service binding... Status.Secret
+		// for unbind the passed service binding instance must have deletetion timestamp set
+		out2, _ := json.MarshalIndent(o.serviceBinding, " ", " ")
+		fmt.Printf("%s\n", string(out2))
+		fmt.Println(repeat)
+		fmt.Println(err)
 
 		// once the link is created, we need to store the information in
 		// env.yaml so that subsequent odo push can create a new deployment
