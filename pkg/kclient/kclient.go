@@ -243,7 +243,7 @@ func (c *Client) IsSSASupported() bool {
 	if c.isSSASupported == nil {
 		versionWithSSA, err := semver.Make("1.16.0")
 		if err != nil {
-			klog.Warningf("unable to parse version %q", err)
+			panic("unable to parse version: " + err.Error())
 		}
 
 		kVersion, err := c.discoveryClient.ServerVersion()

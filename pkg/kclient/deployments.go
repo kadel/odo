@@ -195,7 +195,7 @@ func resourceAsJson(resource interface{}) string {
 	return string(data)
 }
 
-// ApplyDeployment updates a deployment based on the given deployment spec
+// CreateDeployment creates deployment based on the given deployment spec
 func (c *Client) CreateDeployment(deploy appsv1.Deployment) (*appsv1.Deployment, error) {
 	deployment, err := c.KubeClient.AppsV1().Deployments(c.Namespace).Create(context.TODO(), &deploy, metav1.CreateOptions{FieldManager: "odo"})
 	if err != nil {
@@ -213,7 +213,7 @@ func (c *Client) UpdateDeployment(deploy appsv1.Deployment) (*appsv1.Deployment,
 	return deployment, nil
 }
 
-// ApplyDeployment updates a deployment based on the given deployment spec
+// ApplyDeployment creates or updates a deployment based on the given deployment spec
 func (c *Client) ApplyDeployment(deploy appsv1.Deployment) (*appsv1.Deployment, error) {
 	data, err := json.Marshal(deploy)
 
